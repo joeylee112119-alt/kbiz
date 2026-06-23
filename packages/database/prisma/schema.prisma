@@ -1,0 +1,656 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AppState {
+  ONBOARDING
+  TRIAL_READY
+  TRIAL_CALL
+  TRIAL_RESULT
+  SUBSCRIPTION
+  HOME
+  CALL_SCHEDULED
+  CALL_RINGING
+  CALL_CONNECTING
+  LESSON_ACTIVE
+  LESSON_FINISHING
+  RESULT_GENERATING
+  RESULT
+  REVIEW
+}
+
+enum CefrLevel {
+  A1
+  A2
+  B1
+  B2
+}
+
+enum CallAttemptStatus {
+  CREATED
+  PUSH_SENT
+  RINGING
+  ACCEPTED
+  CONNECTING
+  ACTIVE
+  COMPLETED
+  DECLINED
+  SNOOZED
+  MISSED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum LessonStageType {
+  CHECK_IN
+  WARM_UP
+  TARGET_PHRASES
+  GUIDED_ROLEPLAY
+  FREE_TALK
+  CORRECTION
+  WRAP_UP
+  COMPLETED
+}
+
+enum ReviewItemStatus {
+  NEW
+  LEARNING
+  REVIEWING
+  MASTERED
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  CONTENT_MANAGER
+  SUPPORT
+  ANALYST
+}
+
+enum SubscriptionStatus {
+  FREE
+  TRIAL
+  PREMIUM
+  EXPIRED
+}
+
+enum LessonTemplateStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model User {
+  id                String             @id @default(uuid()) @db.Uuid
+  displayName       String?
+  appState          AppState           @default(ONBOARDING)
+  timezone          String             @default("Asia/Seoul")
+  locale            String             @default("ko-KR")
+  version           Int                @default(1)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  deletedAt         DateTime?
+  identities        UserIdentity[]
+  refreshTokens     RefreshToken[]
+  learnerProfile    LearnerProfile?
+  devices           Device[]
+  callSchedules     CallSchedule[]
+  callAttempts      CallAttempt[]
+  lessonSessions    LessonSession[]
+  userVocabulary    UserVocabulary[]
+  reviewItems       ReviewItem[]
+  progressSnapshots ProgressSnapshot[]
+  subscriptions     Subscription[]
+  entitlements      Entitlement[]
+
+  @@index([appState])
+  @@index([deletedAt])
+}
+
+model UserIdentity {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  provider       String
+  providerUserId String
+  email          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  familyId  String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, familyId])
+  @@index([expiresAt])
+}
+
+model LearnerProfile {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @unique @db.Uuid
+  level                CefrLevel
+  englishVariant       String
+  goals                String[]
+  difficultAreas       String[]
+  correctionPreference String
+  interests            String[]
+  dailyStudyMinutes    Int
+  tutorId              String?  @db.Uuid
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tutor                Tutor?   @relation(fields: [tutorId], references: [id], onDelete: SetNull)
+}
+
+model Tutor {
+  id              String           @id @default(uuid()) @db.Uuid
+  name            String
+  personaKo       String
+  personaEn       String
+  imageUrl        String
+  status          String           @default("ACTIVE")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  voices          TutorVoice[]
+  profiles        LearnerProfile[]
+  callAttempts    CallAttempt[]
+  lessonSessions  LessonSession[]
+  backchannelClips BackchannelClip[]
+}
+
+model TutorVoice {
+  id          String   @id @default(uuid()) @db.Uuid
+  tutorId     String   @db.Uuid
+  provider    String
+  providerKey String
+  displayName String
+  previewUrl  String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tutor       Tutor    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+
+  @@index([tutorId])
+}
+
+model BackchannelClip {
+  id          String   @id @default(uuid()) @db.Uuid
+  tutorId     String?  @db.Uuid
+  clipKey     String
+  label       String
+  audioUrl    String
+  weight      Int      @default(10)
+  durationMs  Int
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tutor       Tutor?   @relation(fields: [tutorId], references: [id], onDelete: SetNull)
+
+  @@unique([tutorId, clipKey])
+}
+
+model Device {
+  id             String      @id @default(uuid()) @db.Uuid
+  userId         String      @db.Uuid
+  platform       String
+  deviceName     String?
+  appVersion     String?
+  osVersion      String?
+  deviceIdHash   String
+  lastSeenAt     DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pushTokens     PushToken[]
+
+  @@unique([userId, deviceIdHash])
+}
+
+model PushToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  deviceId  String    @db.Uuid
+  provider  String
+  tokenHash String
+  tokenLast4 String
+  expiresAt DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, tokenHash])
+  @@index([deviceId])
+}
+
+model CallSchedule {
+  id                    String        @id @default(uuid()) @db.Uuid
+  userId                String        @db.Uuid
+  weekdays              Int[]
+  localTime             String
+  timezone              String
+  lessonDurationMinutes Int           @default(15)
+  holidayPauseEnabled   Boolean       @default(true)
+  pausedAt              DateTime?
+  nextRunAt             DateTime
+  retryPolicy           Json
+  version               Int           @default(1)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  deletedAt             DateTime?
+  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempts              CallAttempt[]
+
+  @@index([nextRunAt])
+  @@index([userId, deletedAt])
+}
+
+model CallAttempt {
+  id             String            @id @default(uuid()) @db.Uuid
+  userId         String            @db.Uuid
+  scheduleId     String?           @db.Uuid
+  tutorId        String            @db.Uuid
+  status         CallAttemptStatus @default(CREATED)
+  startsAt       DateTime
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  endedAt        DateTime?
+  iosCallKitUuid String?
+  androidCallId  String?
+  retryCount     Int               @default(0)
+  idempotencyKey String?
+  version        Int               @default(1)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schedule       CallSchedule?     @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  tutor          Tutor             @relation(fields: [tutorId], references: [id], onDelete: Restrict)
+  lessonSession  LessonSession?
+  notifications  NotificationLog[]
+
+  @@unique([idempotencyKey])
+  @@index([scheduleId, startsAt])
+  @@index([userId, status])
+}
+
+model LessonTemplate {
+  id          String                  @id @default(uuid()) @db.Uuid
+  slug        String                  @unique
+  titleKo     String
+  titleEn     String
+  level       CefrLevel
+  category    String
+  status      LessonTemplateStatus    @default(DRAFT)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  versions    LessonTemplateVersion[]
+}
+
+model LessonTemplateVersion {
+  id                 String                @id @default(uuid()) @db.Uuid
+  lessonTemplateId   String                @db.Uuid
+  objective          String
+  estimatedDuration  Int                   @default(900)
+  version            Int
+  status             LessonTemplateStatus  @default(DRAFT)
+  promptVersionId    String?               @db.Uuid
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  lessonTemplate     LessonTemplate        @relation(fields: [lessonTemplateId], references: [id], onDelete: Cascade)
+  stages             LessonStageTemplate[]
+  materialCards      MaterialCard[]
+  targetExpressions  TargetExpression[]
+  promptVersion      PromptVersion?        @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
+  lessonSessions     LessonSession[]
+
+  @@unique([lessonTemplateId, version])
+}
+
+model LessonStageTemplate {
+  id                      String                @id @default(uuid()) @db.Uuid
+  lessonTemplateVersionId String                @db.Uuid
+  stageType               LessonStageType
+  sequence                Int
+  plannedDurationSeconds  Int
+  objective               String
+  entryCondition          String
+  exitCondition           String
+  promptInstruction       String
+  backchannelEnabled      Boolean               @default(true)
+  correctionPolicy        String
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  lessonTemplateVersion   LessonTemplateVersion @relation(fields: [lessonTemplateVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonTemplateVersionId, sequence])
+}
+
+model MaterialCard {
+  id                      String                @id @default(uuid()) @db.Uuid
+  lessonTemplateVersionId String                @db.Uuid
+  type                    String
+  title                   String
+  body                    String
+  imageUrl                String?
+  audioUrl                String?
+  targetExpressionIds     String[]
+  hints                   String[]
+  sequence                Int
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  lessonTemplateVersion   LessonTemplateVersion @relation(fields: [lessonTemplateVersionId], references: [id], onDelete: Cascade)
+
+  @@index([lessonTemplateVersionId, sequence])
+}
+
+model TargetExpression {
+  id                      String                @id @default(uuid()) @db.Uuid
+  lessonTemplateVersionId String                @db.Uuid
+  text                    String
+  meaningKo               String
+  examples                String[]
+  alternatives            String[]
+  level                   CefrLevel
+  grammarTags             String[]
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  lessonTemplateVersion   LessonTemplateVersion @relation(fields: [lessonTemplateVersionId], references: [id], onDelete: Cascade)
+  vocabularyItems         VocabularyItem[]
+
+  @@index([lessonTemplateVersionId])
+}
+
+model LessonSession {
+  id                      String                  @id @default(uuid()) @db.Uuid
+  userId                  String                  @db.Uuid
+  callAttemptId           String?                 @unique @db.Uuid
+  tutorId                 String                  @db.Uuid
+  lessonTemplateVersionId String?                 @db.Uuid
+  state                   LessonStageType         @default(CHECK_IN)
+  startedAt               DateTime?
+  plannedEndAt            DateTime?
+  actualEndAt             DateTime?
+  timeScale               Float                   @default(1)
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  callAttempt             CallAttempt?            @relation(fields: [callAttemptId], references: [id], onDelete: SetNull)
+  tutor                   Tutor                   @relation(fields: [tutorId], references: [id], onDelete: Restrict)
+  lessonTemplateVersion   LessonTemplateVersion?  @relation(fields: [lessonTemplateVersionId], references: [id], onDelete: SetNull)
+  stageSessions           LessonStageSession[]
+  utterances              Utterance[]
+  transcriptSegments      TranscriptSegment[]
+  backchannelEvents       BackchannelEvent[]
+  corrections             Correction[]
+  vocabularyItems         VocabularyItem[]
+  report                  LessonReport?
+
+  @@index([userId, createdAt])
+}
+
+model LessonStageSession {
+  id              String          @id @default(uuid()) @db.Uuid
+  lessonSessionId String          @db.Uuid
+  stageType       LessonStageType
+  startedAt       DateTime
+  plannedEndAt    DateTime
+  actualEndAt     DateTime?
+  objective       String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  lessonSession   LessonSession   @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+
+  @@index([lessonSessionId, stageType])
+}
+
+model Utterance {
+  id              String        @id @default(uuid()) @db.Uuid
+  lessonSessionId String        @db.Uuid
+  speaker         String
+  transcript      String
+  startedAt       DateTime
+  endedAt         DateTime
+  durationMs      Int
+  createdAt       DateTime      @default(now())
+  lessonSession   LessonSession @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+
+  @@index([lessonSessionId, startedAt])
+}
+
+model TranscriptSegment {
+  id              String        @id @default(uuid()) @db.Uuid
+  lessonSessionId String        @db.Uuid
+  speaker         String
+  text            String
+  isFinal         Boolean       @default(false)
+  startedAt       DateTime
+  endedAt         DateTime?
+  createdAt       DateTime      @default(now())
+  lessonSession   LessonSession @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+
+  @@index([lessonSessionId, createdAt])
+}
+
+model BackchannelEvent {
+  id              String        @id @default(uuid()) @db.Uuid
+  lessonSessionId String        @db.Uuid
+  userTurnId      String?
+  clipId          String
+  trigger         String
+  playedAt        DateTime
+  durationMs      Int
+  createdAt       DateTime      @default(now())
+  lessonSession   LessonSession @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+
+  @@index([lessonSessionId, playedAt])
+}
+
+model Correction {
+  id                String          @id @default(uuid()) @db.Uuid
+  lessonSessionId   String          @db.Uuid
+  originalText      String
+  correctedText     String
+  explanationKo     String
+  category          String
+  severity          String
+  stage             LessonStageType
+  timestamp         DateTime
+  repeatedCount     Int             @default(1)
+  selectedForReport Boolean         @default(false)
+  createdAt         DateTime        @default(now())
+  lessonSession     LessonSession   @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+
+  @@index([lessonSessionId, selectedForReport])
+}
+
+model VocabularyItem {
+  id                 String            @id @default(uuid()) @db.Uuid
+  lessonSessionId    String?           @db.Uuid
+  targetExpressionId String?           @db.Uuid
+  text               String
+  meaningKo          String
+  createdAt          DateTime          @default(now())
+  lessonSession      LessonSession?    @relation(fields: [lessonSessionId], references: [id], onDelete: SetNull)
+  targetExpression   TargetExpression? @relation(fields: [targetExpressionId], references: [id], onDelete: SetNull)
+  userVocabulary     UserVocabulary[]
+
+  @@unique([text, meaningKo])
+}
+
+model UserVocabulary {
+  id               String         @id @default(uuid()) @db.Uuid
+  userId           String         @db.Uuid
+  vocabularyItemId String         @db.Uuid
+  savedAt          DateTime       @default(now())
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vocabularyItem   VocabularyItem @relation(fields: [vocabularyItemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, vocabularyItemId])
+}
+
+model ReviewItem {
+  id                 String           @id @default(uuid()) @db.Uuid
+  userId             String           @db.Uuid
+  sourceType         String
+  sourceId           String
+  prompt             String
+  answer             String
+  status             ReviewItemStatus @default(NEW)
+  nextReviewAt       DateTime
+  intervalDays       Int              @default(1)
+  easeFactor         Float            @default(2.5)
+  consecutiveCorrect Int              @default(0)
+  lastResult         String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, nextReviewAt])
+}
+
+model LessonReport {
+  id                 String        @id @default(uuid()) @db.Uuid
+  lessonSessionId    String        @unique @db.Uuid
+  summary            String
+  scores             Json
+  userSpeakingRatio  Float
+  reportJson         Json
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  lessonSession      LessonSession @relation(fields: [lessonSessionId], references: [id], onDelete: Cascade)
+}
+
+model ProgressSnapshot {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @db.Uuid
+  date                DateTime
+  streakDays          Int
+  completedLessons    Int
+  totalSpeakingSeconds Int
+  learnedExpressions  Int
+  createdAt           DateTime @default(now())
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+}
+
+model Subscription {
+  id                 String             @id @default(uuid()) @db.Uuid
+  userId             String             @db.Uuid
+  provider           String
+  providerCustomerId String?
+  productId          String
+  status             SubscriptionStatus
+  currentPeriodEnd   DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model Entitlement {
+  id        String             @id @default(uuid()) @db.Uuid
+  userId    String             @db.Uuid
+  state     SubscriptionStatus
+  reason    String
+  startsAt  DateTime
+  endsAt    DateTime?
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, state])
+}
+
+model NotificationLog {
+  id            String       @id @default(uuid()) @db.Uuid
+  callAttemptId String?      @db.Uuid
+  provider      String
+  type          String
+  status        String
+  externalId    String?
+  errorCode     String?
+  createdAt     DateTime     @default(now())
+  callAttempt   CallAttempt? @relation(fields: [callAttemptId], references: [id], onDelete: SetNull)
+
+  @@index([callAttemptId, createdAt])
+}
+
+model PromptTemplate {
+  id          String          @id @default(uuid()) @db.Uuid
+  name        String          @unique
+  description String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  versions    PromptVersion[]
+}
+
+model PromptVersion {
+  id                    String                  @id @default(uuid()) @db.Uuid
+  promptTemplateId      String                  @db.Uuid
+  version               Int
+  body                  String
+  isActive              Boolean                 @default(false)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  promptTemplate        PromptTemplate          @relation(fields: [promptTemplateId], references: [id], onDelete: Cascade)
+  lessonTemplateVersions LessonTemplateVersion[]
+
+  @@unique([promptTemplateId, version])
+}
+
+model FeatureFlag {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  enabled     Boolean  @default(false)
+  description String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?
+  actorRole   AdminRole?
+  action      String
+  targetType  String
+  targetId    String?
+  before      Json?
+  after       Json?
+  requestId   String
+  createdAt   DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}
+
+model OutboxEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  aggregateType String
+  aggregateId   String
+  eventType     String
+  payload       Json
+  idempotencyKey String?
+  createdAt     DateTime  @default(now())
+  processedAt   DateTime?
+  failedAt      DateTime?
+
+  @@unique([idempotencyKey])
+  @@index([processedAt, createdAt])
+}

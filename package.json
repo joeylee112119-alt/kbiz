@@ -1,0 +1,37 @@
+{
+  "name": "ai-phone-english",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.23.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "smoke": "tsx scripts/smoke.ts",
+    "smoke:realtime:production": "tsx scripts/realtime-production-smoke.ts",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "db:generate": "pnpm --filter @aiphone/database prisma generate",
+    "db:migrate": "pnpm --filter @aiphone/database prisma migrate dev",
+    "db:migrate:dev": "pnpm --filter @aiphone/database prisma migrate dev",
+    "db:migrate:deploy": "pnpm --filter @aiphone/database prisma migrate deploy",
+    "db:seed": "pnpm --filter @aiphone/database seed"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.3",
+    "eslint": "9.29.0",
+    "prettier": "3.5.3",
+    "prisma": "6.10.1",
+    "turbo": "2.5.4",
+    "tsx": "4.20.3",
+    "typescript-eslint": "8.34.1",
+    "typescript": "5.8.3",
+    "vitest": "3.2.4"
+  }
+}
