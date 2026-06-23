@@ -13,6 +13,7 @@
   "dependencies": {
     "@aiphone/config": "workspace:*",
     "@aiphone/contracts": "workspace:*",
+    "@aiphone/database": "workspace:*",
     "@aiphone/notification": "workspace:*",
     "bullmq": "5.56.0",
     "ioredis": "5.6.1",

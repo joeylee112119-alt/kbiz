@@ -1,22 +1,22 @@
-import { Controller, Get, Param } from "@nestjs/common";
-import { MockAppService } from "../services/mock-app.service.js";
+import { Controller, Get, Inject, Param } from "@nestjs/common";
+import { AppService } from "../services/app.service.js";
 
 @Controller("tutors")
 export class TutorsController {
-  constructor(private readonly app: MockAppService) {}
+  constructor(@Inject(AppService) private readonly app: AppService) {}
 
   @Get()
-  list(): Record<string, unknown> {
-    return { data: this.app.tutors };
+  async list(): Promise<Record<string, unknown>> {
+    return { data: await this.app.listTutors() };
   }
 
   @Get(":id")
-  get(@Param("id") id: string): Record<string, unknown> {
-    return { data: this.app.tutors.find((tutor) => tutor.id === id) ?? null };
+  async get(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.getTutor(id) };
   }
 
   @Get(":id/voices")
-  voices(@Param("id") id: string): Record<string, unknown> {
-    return { data: [{ id: `${id}-voice-marin`, providerKey: "marin", displayName: "Marin" }] };
+  async voices(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.listTutorVoices(id) };
   }
 }

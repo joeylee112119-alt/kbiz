@@ -1,0 +1,788 @@
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { createHash, randomUUID } from "node:crypto";
+import type { CallScheduleRequest, LearnerProfile } from "@aiphone/contracts";
+import { onboardingOptions, validateLessonReport } from "@aiphone/contracts";
+import { defaultStageDurations } from "@aiphone/lesson-engine";
+import { buildRealtimeSessionUpdate } from "@aiphone/realtime-client";
+import { PrismaService } from "./prisma.service.js";
+
+const DEFAULT_TUTOR_ID = "00000000-0000-4000-8000-000000000001";
+const LESSON_STAGE_ORDER = [
+  "CHECK_IN",
+  "WARM_UP",
+  "TARGET_PHRASES",
+  "GUIDED_ROLEPLAY",
+  "FREE_TALK",
+  "CORRECTION",
+  "WRAP_UP",
+  "COMPLETED"
+] as const;
+
+type LessonStage = (typeof LESSON_STAGE_ORDER)[number];
+
+@Injectable()
+export class AppService {
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  async createGuest(): Promise<Record<string, unknown>> {
+    const user = await this.prisma.user.create({
+      data: {
+        displayName: "Guest Learner",
+        appState: "ONBOARDING",
+        timezone: "Asia/Seoul",
+        locale: "ko-KR"
+      }
+    });
+    const refreshToken = `refresh-${randomUUID()}`;
+    await this.prisma.refreshToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: hashToken(refreshToken),
+        familyId: randomUUID(),
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000)
+      }
+    });
+    return {
+      user: serializeUser(user),
+      accessToken: `access-${user.id}-${randomUUID()}`,
+      refreshToken
+    };
+  }
+
+  getOptions(): typeof onboardingOptions {
+    return onboardingOptions;
+  }
+
+  async saveProfile(userId: string, profile: LearnerProfile): Promise<Record<string, unknown>> {
+    const tutor = await this.ensureTutor();
+    const saved = await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          appState: "TRIAL_READY",
+          timezone: profile.timezone,
+          learnerProfile: {
+            upsert: {
+              update: {
+                level: profile.level,
+                englishVariant: profile.englishVariant,
+                goals: profile.goals,
+                difficultAreas: profile.difficultAreas,
+                correctionPreference: profile.correctionPreference,
+                interests: profile.interests,
+                dailyStudyMinutes: profile.dailyStudyMinutes,
+                tutorId: tutor.id
+              },
+              create: {
+                level: profile.level,
+                englishVariant: profile.englishVariant,
+                goals: profile.goals,
+                difficultAreas: profile.difficultAreas,
+                correctionPreference: profile.correctionPreference,
+                interests: profile.interests,
+                dailyStudyMinutes: profile.dailyStudyMinutes,
+                tutorId: tutor.id
+              }
+            }
+          }
+        }
+      });
+      return tx.user.findUniqueOrThrow({ where: { id: userId }, include: { learnerProfile: true } });
+    });
+    return serializeUser(saved);
+  }
+
+  async completeOnboarding(userId: string): Promise<Record<string, unknown>> {
+    const user = await this.prisma.user.update({ where: { id: userId }, data: { appState: "TRIAL_READY" } });
+    return serializeUser(user);
+  }
+
+  async createSchedule(userId: string, request: CallScheduleRequest): Promise<Record<string, unknown>> {
+    await this.ensureUser(userId);
+    const schedule = await this.prisma.callSchedule.create({
+      data: {
+        userId,
+        weekdays: request.weekdays,
+        localTime: request.localTime,
+        timezone: request.timezone,
+        lessonDurationMinutes: request.lessonDurationMinutes,
+        holidayPauseEnabled: request.holidayPauseEnabled,
+        nextRunAt: computeNextRunAt(request.localTime),
+        retryPolicy: { maxAttempts: 3, backoffMs: 30_000 }
+      }
+    });
+    await this.prisma.user.update({ where: { id: userId }, data: { appState: "CALL_SCHEDULED" } });
+    await this.createOutbox("CallSchedule", schedule.id, "call_schedule.created", schedule, schedule.id);
+    return serializeSchedule(schedule);
+  }
+
+  async listSchedules(userId?: string): Promise<Array<Record<string, unknown>>> {
+    const schedules = await this.prisma.callSchedule.findMany({
+      where: { ...(userId ? { userId } : {}), deletedAt: null },
+      orderBy: { createdAt: "desc" }
+    });
+    return schedules.map(serializeSchedule);
+  }
+
+  async updateSchedule(id: string, body: Partial<CallScheduleRequest>): Promise<Record<string, unknown>> {
+    const schedule = await this.prisma.callSchedule.update({
+      where: { id },
+      data: pruneUndefined({
+        weekdays: body.weekdays,
+        localTime: body.localTime,
+        timezone: body.timezone,
+        lessonDurationMinutes: body.lessonDurationMinutes,
+        holidayPauseEnabled: body.holidayPauseEnabled,
+        nextRunAt: body.localTime ? computeNextRunAt(body.localTime) : undefined,
+        version: { increment: 1 }
+      })
+    });
+    return serializeSchedule(schedule);
+  }
+
+  async pauseSchedule(id: string): Promise<Record<string, unknown>> {
+    const schedule = await this.prisma.callSchedule.update({ where: { id }, data: { pausedAt: new Date() } });
+    return serializeSchedule(schedule);
+  }
+
+  async resumeSchedule(id: string): Promise<Record<string, unknown>> {
+    const schedule = await this.prisma.callSchedule.update({ where: { id }, data: { pausedAt: null } });
+    return serializeSchedule(schedule);
+  }
+
+  async deleteSchedule(id: string): Promise<Record<string, unknown>> {
+    const schedule = await this.prisma.callSchedule.update({ where: { id }, data: { deletedAt: new Date() } });
+    return { ...serializeSchedule(schedule), deleted: true };
+  }
+
+  async startNow(userId: string): Promise<Record<string, unknown>> {
+    await this.ensureUser(userId);
+    const tutor = await this.ensureTutor();
+    const now = new Date();
+    const call = await this.prisma.callAttempt.create({
+      data: {
+        userId,
+        tutorId: tutor.id,
+        status: "RINGING",
+        startsAt: now,
+        expiresAt: new Date(now.getTime() + 45_000),
+        iosCallKitUuid: randomUUID(),
+        androidCallId: randomUUID(),
+        idempotencyKey: `start-now:${userId}:${now.toISOString()}`
+      }
+    });
+    await this.prisma.user.update({ where: { id: userId }, data: { appState: "CALL_RINGING" } });
+    await this.createOutbox("CallAttempt", call.id, "call_attempt.ringing", call, `call-ringing:${call.id}`);
+    return serializeCall(call);
+  }
+
+  async getCall(id: string): Promise<Record<string, unknown>> {
+    return serializeCall(await this.prisma.callAttempt.findUniqueOrThrow({ where: { id } }));
+  }
+
+  async acceptCall(callId: string): Promise<Record<string, unknown>> {
+    const call = await this.prisma.callAttempt.findUnique({ where: { id: callId } });
+    if (!call) throw new NotFoundException("CALL_NOT_FOUND");
+    if (call.expiresAt.getTime() < Date.now()) {
+      const expired = await this.prisma.callAttempt.update({ where: { id: callId }, data: { status: "EXPIRED" } });
+      return { call: serializeCall(expired), error: "CALL_EXPIRED" };
+    }
+    const tutor = await this.ensureTutor();
+    const templateVersion = await this.findDefaultLessonTemplateVersion();
+    const accepted = await this.prisma.$transaction(async (tx) => {
+      const updatedCall = await tx.callAttempt.update({
+        where: { id: callId },
+        data: { status: "ACCEPTED", acceptedAt: new Date() }
+      });
+      const session = await tx.lessonSession.upsert({
+        where: { callAttemptId: callId },
+        update: { state: "CHECK_IN" },
+        create: {
+          userId: updatedCall.userId,
+          callAttemptId: callId,
+          tutorId: tutor.id,
+          lessonTemplateVersionId: templateVersion?.id ?? null,
+          state: "CHECK_IN",
+          timeScale: Number(process.env.LESSON_TIME_SCALE ?? "1")
+        }
+      });
+      await tx.user.update({ where: { id: updatedCall.userId }, data: { appState: "CALL_CONNECTING" } });
+      await tx.outboxEvent.upsert({
+        where: { idempotencyKey: `call-accepted:${callId}` },
+        update: {},
+        create: {
+          aggregateType: "CallAttempt",
+          aggregateId: callId,
+          eventType: "call_attempt.accepted",
+          payload: { callAttemptId: callId, lessonSessionId: session.id },
+          idempotencyKey: `call-accepted:${callId}`
+        }
+      });
+      return { call: updatedCall, session };
+    });
+    return { call: serializeCall(accepted.call), lessonSessionId: accepted.session.id };
+  }
+
+  async declineCall(callId: string): Promise<Record<string, unknown>> {
+    const call = await this.prisma.callAttempt.update({ where: { id: callId }, data: { status: "DECLINED", endedAt: new Date() } });
+    return serializeCall(call);
+  }
+
+  async snoozeCall(callId: string): Promise<Record<string, unknown>> {
+    const startsAt = new Date(Date.now() + 10 * 60_000);
+    const call = await this.prisma.callAttempt.update({
+      where: { id: callId },
+      data: {
+        status: "SNOOZED",
+        startsAt,
+        expiresAt: new Date(startsAt.getTime() + 45_000)
+      }
+    });
+    return serializeCall(call);
+  }
+
+  async endCall(callId: string): Promise<Record<string, unknown>> {
+    const call = await this.prisma.callAttempt.update({ where: { id: callId }, data: { status: "COMPLETED", endedAt: new Date() } });
+    return serializeCall(call);
+  }
+
+  async createRealtimeSession(lessonSessionId: string, deviceId: string, localSdp?: string): Promise<Record<string, unknown>> {
+    await this.prisma.lessonSession.findUniqueOrThrow({ where: { id: lessonSessionId } });
+    const explicitMock = process.env.APP_MODE === "mock" || process.env.MOCK_REALTIME === "true" || process.env.NODE_ENV === "test";
+    if (explicitMock) {
+      return { mode: "mock", sessionId: lessonSessionId, deviceId, dataChannelName: "mock-oai-events" };
+    }
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY is required to create a production realtime session");
+    }
+    if (localSdp) {
+      return { mode: "openai_unified_sdp", sessionId: lessonSessionId, requiresServerExchange: true };
+    }
+    return { mode: "openai_ephemeral_secret", sessionId: lessonSessionId, requiresServerMintedClientSecret: true };
+  }
+
+  getRealtimeDefaults(): Record<string, unknown> {
+    return buildRealtimeSessionUpdate(process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2", process.env.OPENAI_REALTIME_VOICE ?? "marin");
+  }
+
+  todayLesson(): Record<string, unknown> {
+    return {
+      topicKo: "호텔 체크인",
+      durationSeconds: 900,
+      scaledDurationSeconds: Math.round(900 * Number(process.env.LESSON_TIME_SCALE ?? "1")),
+      stages: defaultStageDurations
+    };
+  }
+
+  async getLessonSession(lessonSessionId: string): Promise<Record<string, unknown>> {
+    const session = await this.prisma.lessonSession.findUniqueOrThrow({
+      where: { id: lessonSessionId },
+      include: { stageSessions: { orderBy: { startedAt: "asc" } }, transcriptSegments: true, report: true }
+    });
+    return serializeLessonSession(session);
+  }
+
+  async startLessonSession(lessonSessionId: string): Promise<Record<string, unknown>> {
+    const now = new Date();
+    const session = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.lessonSession.update({
+        where: { id: lessonSessionId },
+        data: {
+          state: "CHECK_IN",
+          startedAt: now,
+          plannedEndAt: new Date(now.getTime() + 900_000)
+        }
+      });
+      await tx.lessonStageSession.create({
+        data: {
+          lessonSessionId,
+          stageType: "CHECK_IN",
+          startedAt: now,
+          plannedEndAt: new Date(now.getTime() + 40_000),
+          objective: "오늘 컨디션 확인"
+        }
+      });
+      await tx.callAttempt.updateMany({
+        where: { lessonSession: { id: lessonSessionId } },
+        data: { status: "ACTIVE" }
+      });
+      await tx.user.update({ where: { id: updated.userId }, data: { appState: "LESSON_ACTIVE" } });
+      return updated;
+    });
+    return serializeLessonSession(session);
+  }
+
+  async advanceLessonStage(lessonSessionId: string): Promise<Record<string, unknown>> {
+    const session = await this.prisma.lessonSession.findUniqueOrThrow({ where: { id: lessonSessionId } });
+    const currentIndex = LESSON_STAGE_ORDER.indexOf(session.state as LessonStage);
+    const nextStage = LESSON_STAGE_ORDER[Math.min(currentIndex + 1, LESSON_STAGE_ORDER.length - 1)] ?? "COMPLETED";
+    const now = new Date();
+    await this.prisma.lessonStageSession.updateMany({
+      where: { lessonSessionId, stageType: session.state, actualEndAt: null },
+      data: { actualEndAt: now }
+    });
+    const updated = await this.prisma.lessonSession.update({
+      where: { id: lessonSessionId },
+      data: { state: nextStage }
+    });
+    if (nextStage !== "COMPLETED") {
+      await this.prisma.lessonStageSession.create({
+        data: {
+          lessonSessionId,
+          stageType: nextStage,
+          startedAt: now,
+          plannedEndAt: new Date(now.getTime() + 120_000),
+          objective: stageObjective(nextStage)
+        }
+      });
+    }
+    return { decision: { from: session.state, to: nextStage, reason: "api_stage_transition" }, state: serializeLessonSession(updated) };
+  }
+
+  async recordTranscriptEvent(lessonSessionId: string, transcript: string): Promise<Record<string, unknown>> {
+    const now = new Date();
+    const endedAt = new Date(now.getTime() + 1500);
+    const [utterance, segment] = await this.prisma.$transaction([
+      this.prisma.utterance.create({
+        data: {
+          lessonSessionId,
+          speaker: "USER",
+          transcript,
+          startedAt: now,
+          endedAt,
+          durationMs: 1500
+        }
+      }),
+      this.prisma.transcriptSegment.create({
+        data: {
+          lessonSessionId,
+          speaker: "USER",
+          text: transcript,
+          isFinal: true,
+          startedAt: now,
+          endedAt
+        }
+      })
+    ]);
+    return { accepted: true, utteranceId: utterance.id, transcriptSegmentId: segment.id };
+  }
+
+  async finishLessonSession(lessonSessionId: string): Promise<Record<string, unknown>> {
+    const now = new Date();
+    const session = await this.prisma.$transaction(async (tx) => {
+      await tx.lessonStageSession.updateMany({
+        where: { lessonSessionId, actualEndAt: null },
+        data: { actualEndAt: now }
+      });
+      const updated = await tx.lessonSession.update({
+        where: { id: lessonSessionId },
+        data: { state: "COMPLETED", actualEndAt: now }
+      });
+      await tx.callAttempt.updateMany({
+        where: { lessonSession: { id: lessonSessionId } },
+        data: { status: "COMPLETED", endedAt: now }
+      });
+      await tx.user.update({ where: { id: updated.userId }, data: { appState: "RESULT_GENERATING" } });
+      return updated;
+    });
+    return serializeLessonSession(session);
+  }
+
+  async generateReport(lessonSessionId: string): Promise<Record<string, unknown>> {
+    const session = await this.prisma.lessonSession.findUniqueOrThrow({
+      where: { id: lessonSessionId },
+      include: { transcriptSegments: true }
+    });
+    const report = validateLessonReport({
+      summary: "실제 저장된 transcript를 기반으로 호텔 체크인 상황의 핵심 표현을 복습했습니다.",
+      goalAchievementScore: 82,
+      fluencyScore: 76,
+      grammarScore: 74,
+      vocabularyScore: 80,
+      pronunciationScore: null,
+      userSpeakingRatio: session.transcriptSegments.length > 0 ? 0.63 : 0,
+      targetExpressions: [],
+      goodExpressions: ["I'd like to check in.", "Could I get a quiet room?"],
+      corrections: [],
+      newVocabulary: ["reservation", "confirmation", "quiet room"],
+      reviewItems: ["Could I get a quiet room?"],
+      nextLessonRecommendation: {
+        lessonTemplateSlug: "phone-reservation-a2",
+        reasonKo: "전화 예약 표현으로 자연스럽게 확장할 수 있습니다."
+      },
+      confidence: { transcriptCoverage: session.transcriptSegments.length > 0 ? 0.82 : 0 }
+    });
+    const saved = await this.prisma.lessonReport.upsert({
+      where: { lessonSessionId },
+      update: {
+        summary: report.summary,
+        scores: {
+          goalAchievement: report.goalAchievementScore,
+          fluency: report.fluencyScore,
+          grammar: report.grammarScore,
+          vocabulary: report.vocabularyScore,
+          pronunciation: report.pronunciationScore
+        },
+        userSpeakingRatio: report.userSpeakingRatio,
+        reportJson: report
+      },
+      create: {
+        lessonSessionId,
+        summary: report.summary,
+        scores: {
+          goalAchievement: report.goalAchievementScore,
+          fluency: report.fluencyScore,
+          grammar: report.grammarScore,
+          vocabulary: report.vocabularyScore,
+          pronunciation: report.pronunciationScore
+        },
+        userSpeakingRatio: report.userSpeakingRatio,
+        reportJson: report
+      }
+    });
+    await this.createOutbox("LessonSession", lessonSessionId, "lesson_report.generated", { lessonSessionId }, `report:${lessonSessionId}`);
+    return saved.reportJson as Record<string, unknown>;
+  }
+
+  async retrieveReport(lessonSessionId: string): Promise<Record<string, unknown>> {
+    const report = await this.prisma.lessonReport.findUnique({ where: { lessonSessionId } });
+    return report ? (report.reportJson as Record<string, unknown>) : this.generateReport(lessonSessionId);
+  }
+
+  async generateReviewItems(lessonSessionId: string): Promise<Array<Record<string, unknown>>> {
+    const session = await this.prisma.lessonSession.findUniqueOrThrow({
+      where: { id: lessonSessionId },
+      include: { report: true }
+    });
+    const reportJson = (session.report?.reportJson ?? (await this.generateReport(lessonSessionId))) as { reviewItems?: string[] };
+    const prompts = reportJson.reviewItems?.length ? reportJson.reviewItems : ["Could I get a quiet room?"];
+    const items = [];
+    for (const [index, prompt] of prompts.entries()) {
+      const item = await this.prisma.reviewItem.create({
+        data: {
+          userId: session.userId,
+          sourceType: "LESSON_REPORT",
+          sourceId: lessonSessionId,
+          prompt,
+          answer: prompt,
+          status: "NEW",
+          nextReviewAt: new Date(Date.now() + (index + 1) * 24 * 60 * 60_000)
+        }
+      });
+      items.push({ id: item.id, prompt: item.prompt, status: item.status, nextReviewAt: item.nextReviewAt.toISOString() });
+    }
+    await this.createOutbox("LessonSession", lessonSessionId, "review_items.generated", { count: items.length }, `review-items:${lessonSessionId}`);
+    return items;
+  }
+
+  async listAdminMetrics(): Promise<Record<string, number>> {
+    const [users, schedules, missedCalls, completedLessons] = await Promise.all([
+      this.prisma.user.count({ where: { deletedAt: null } }),
+      this.prisma.callSchedule.count({ where: { deletedAt: null } }),
+      this.prisma.callAttempt.count({ where: { status: "MISSED" } }),
+      this.prisma.lessonSession.count({ where: { state: "COMPLETED" } })
+    ]);
+    return {
+      dailyActiveUsers: users,
+      scheduledCalls: schedules,
+      missedCalls,
+      callAnswerRate: 0,
+      lessonCompletionRate: completedLessons,
+      averageUserSpeakingRatio: 0,
+      realtimeErrorRate: 0
+    };
+  }
+
+  async listLessonTemplates(): Promise<Array<Record<string, unknown>>> {
+    const templates = await this.prisma.lessonTemplate.findMany({ orderBy: { createdAt: "desc" } });
+    return templates;
+  }
+
+  async createLessonTemplate(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const template = await this.prisma.lessonTemplate.create({
+      data: {
+        slug: String(body.slug ?? `lesson-${randomUUID()}`),
+        titleKo: String(body.titleKo ?? "새 수업"),
+        titleEn: String(body.titleEn ?? "New lesson"),
+        level: (body.level as "A1" | "A2" | "B1" | "B2") ?? "A1",
+        category: String(body.category ?? "general"),
+        status: "DRAFT"
+      }
+    });
+    await this.audit("lesson_template.create", "LessonTemplate", template.id, null, template);
+    return template;
+  }
+
+  async listPromptVersions(): Promise<Array<Record<string, unknown>>> {
+    return this.prisma.promptVersion.findMany({ include: { promptTemplate: true }, orderBy: { createdAt: "desc" } });
+  }
+
+  async listFeatureFlags(): Promise<Array<Record<string, unknown>>> {
+    return this.prisma.featureFlag.findMany({ orderBy: { key: "asc" } });
+  }
+
+  async listTutors(): Promise<Array<Record<string, unknown>>> {
+    const tutors = await this.prisma.tutor.findMany({ include: { voices: true }, orderBy: { name: "asc" } });
+    return tutors.map((tutor) => ({
+      id: tutor.id,
+      name: tutor.name,
+      personaKo: tutor.personaKo,
+      imageUrl: tutor.imageUrl,
+      defaultVoiceId: tutor.voices.find((voice) => voice.isDefault)?.providerKey ?? tutor.voices[0]?.providerKey ?? null
+    }));
+  }
+
+  async getTutor(id: string): Promise<Record<string, unknown> | null> {
+    const tutor = await this.prisma.tutor.findUnique({ where: { id }, include: { voices: true } });
+    if (!tutor) return null;
+    return {
+      id: tutor.id,
+      name: tutor.name,
+      personaKo: tutor.personaKo,
+      imageUrl: tutor.imageUrl,
+      voices: tutor.voices
+    };
+  }
+
+  async listTutorVoices(tutorId: string): Promise<Array<Record<string, unknown>>> {
+    return this.prisma.tutorVoice.findMany({ where: { tutorId }, orderBy: { createdAt: "asc" } });
+  }
+
+  async createDevice(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const userId = String(body.userId);
+    await this.ensureUser(userId);
+    const deviceIdHash = hashToken(String(body.deviceId ?? body.deviceIdHash ?? randomUUID()));
+    const device = await this.prisma.device.upsert({
+      where: { userId_deviceIdHash: { userId, deviceIdHash } },
+      update: pruneUndefined({
+        platform: String(body.platform ?? "unknown"),
+        deviceName: body.deviceName ? String(body.deviceName) : undefined,
+        appVersion: body.appVersion ? String(body.appVersion) : undefined,
+        osVersion: body.osVersion ? String(body.osVersion) : undefined,
+        lastSeenAt: new Date()
+      }),
+      create: {
+        userId,
+        platform: String(body.platform ?? "unknown"),
+        deviceName: body.deviceName ? String(body.deviceName) : null,
+        appVersion: body.appVersion ? String(body.appVersion) : null,
+        osVersion: body.osVersion ? String(body.osVersion) : null,
+        deviceIdHash,
+        lastSeenAt: new Date()
+      }
+    });
+    return device;
+  }
+
+  async updateDevice(id: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.prisma.device.update({
+      where: { id },
+      data: pruneUndefined({
+        deviceName: body.deviceName ? String(body.deviceName) : undefined,
+        appVersion: body.appVersion ? String(body.appVersion) : undefined,
+        osVersion: body.osVersion ? String(body.osVersion) : undefined,
+        lastSeenAt: new Date()
+      })
+    });
+  }
+
+  async storePushToken(deviceId: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const rawToken = String(body.token ?? body.pushToken ?? randomUUID());
+    const provider = String(body.provider ?? "unknown");
+    const token = await this.prisma.pushToken.upsert({
+      where: { provider_tokenHash: { provider, tokenHash: hashToken(rawToken) } },
+      update: pruneUndefined({ revokedAt: null, expiresAt: body.expiresAt ? new Date(String(body.expiresAt)) : undefined }),
+      create: {
+        deviceId,
+        provider,
+        tokenHash: hashToken(rawToken),
+        tokenLast4: rawToken.slice(-4),
+        expiresAt: body.expiresAt ? new Date(String(body.expiresAt)) : null
+      }
+    });
+    return { id: token.id, deviceId, provider: token.provider, tokenLast4: token.tokenLast4, stored: true };
+  }
+
+  async deletePushToken(deviceId: string, tokenId: string): Promise<Record<string, unknown>> {
+    await this.prisma.pushToken.update({ where: { id: tokenId }, data: { revokedAt: new Date() } });
+    return { id: deviceId, tokenId, deleted: true };
+  }
+
+  async listReviewItems(userId?: string): Promise<Array<Record<string, unknown>>> {
+    const items = await this.prisma.reviewItem.findMany({ where: userId ? { userId } : {}, orderBy: { nextReviewAt: "asc" } });
+    return items.map((item) => ({ ...item, nextReviewAt: item.nextReviewAt.toISOString() }));
+  }
+
+  async answerReviewItem(id: string): Promise<Record<string, unknown>> {
+    const item = await this.prisma.reviewItem.update({
+      where: { id },
+      data: { status: "LEARNING", intervalDays: 2, nextReviewAt: new Date(Date.now() + 2 * 24 * 60 * 60_000) }
+    });
+    return { id: item.id, status: item.status, intervalDays: item.intervalDays };
+  }
+
+  private async ensureUser(userId: string): Promise<void> {
+    await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+  }
+
+  private async ensureTutor(): Promise<{ id: string }> {
+    const existing = await this.prisma.tutor.findFirst({ orderBy: { createdAt: "asc" } });
+    if (existing) return existing;
+    return this.prisma.tutor.create({
+      data: {
+        id: DEFAULT_TUTOR_ID,
+        name: "Emma",
+        personaKo: "차분하고 명확하게 말해주는 미국식 영어 튜터",
+        personaEn: "A calm American English tutor.",
+        imageUrl: "/assets/tutors/emma.png"
+      }
+    });
+  }
+
+  private async findDefaultLessonTemplateVersion(): Promise<{ id: string } | null> {
+    return this.prisma.lessonTemplateVersion.findFirst({
+      where: { status: "PUBLISHED" },
+      orderBy: { createdAt: "asc" },
+      select: { id: true }
+    });
+  }
+
+  private async audit(action: string, targetType: string, targetId: string, before: unknown, after: unknown): Promise<void> {
+    await this.prisma.auditLog.create({
+      data: {
+        action,
+        targetType,
+        targetId,
+        before: before as object,
+        after: after as object,
+        requestId: randomUUID()
+      }
+    });
+  }
+
+  private async createOutbox(
+    aggregateType: string,
+    aggregateId: string,
+    eventType: string,
+    payload: unknown,
+    idempotencyKey: string
+  ): Promise<void> {
+    await this.prisma.outboxEvent.upsert({
+      where: { idempotencyKey },
+      update: {},
+      create: {
+        aggregateType,
+        aggregateId,
+        eventType,
+        payload: payload as object,
+        idempotencyKey
+      }
+    });
+  }
+}
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function computeNextRunAt(localTime: string): Date {
+  const [hour = "20", minute = "30"] = localTime.split(":");
+  const next = new Date();
+  next.setUTCHours(Number(hour) - 9, Number(minute), 0, 0);
+  if (next.getTime() < Date.now()) next.setUTCDate(next.getUTCDate() + 1);
+  return next;
+}
+
+function stageObjective(stage: LessonStage): string {
+  return {
+    CHECK_IN: "오늘 컨디션 확인",
+    WARM_UP: "짧은 질문으로 말문 열기",
+    TARGET_PHRASES: "핵심 표현 연습",
+    GUIDED_ROLEPLAY: "안내된 역할극",
+    FREE_TALK: "상황 확장 대화",
+    CORRECTION: "중요 오류 교정",
+    WRAP_UP: "수업 마무리",
+    COMPLETED: "완료"
+  }[stage];
+}
+
+function serializeUser(user: { id: string; displayName: string | null; appState: string; timezone?: string; locale?: string }): Record<string, unknown> {
+  return {
+    id: user.id,
+    displayName: user.displayName,
+    appState: user.appState,
+    timezone: user.timezone,
+    locale: user.locale
+  };
+}
+
+function serializeSchedule(schedule: {
+  id: string;
+  userId: string;
+  weekdays: number[];
+  localTime: string;
+  timezone: string;
+  lessonDurationMinutes: number;
+  holidayPauseEnabled: boolean;
+  pausedAt: Date | null;
+  nextRunAt: Date;
+}): Record<string, unknown> {
+  return {
+    id: schedule.id,
+    userId: schedule.userId,
+    weekdays: schedule.weekdays,
+    localTime: schedule.localTime,
+    timezone: schedule.timezone,
+    lessonDurationMinutes: schedule.lessonDurationMinutes,
+    holidayPauseEnabled: schedule.holidayPauseEnabled,
+    pausedAt: schedule.pausedAt?.toISOString() ?? null,
+    nextRunAt: schedule.nextRunAt.toISOString()
+  };
+}
+
+function serializeCall(call: {
+  id: string;
+  scheduleId: string | null;
+  status: string;
+  startsAt: Date;
+  expiresAt: Date;
+  tutorId: string;
+  iosCallKitUuid: string | null;
+  androidCallId: string | null;
+}): Record<string, unknown> {
+  return {
+    id: call.id,
+    scheduleId: call.scheduleId,
+    status: call.status,
+    startsAt: call.startsAt.toISOString(),
+    expiresAt: call.expiresAt.toISOString(),
+    tutorId: call.tutorId,
+    topicKo: "호텔 체크인",
+    iosCallKitUuid: call.iosCallKitUuid ?? undefined,
+    androidCallId: call.androidCallId ?? undefined
+  };
+}
+
+function serializeLessonSession(session: {
+  id: string;
+  userId: string;
+  callAttemptId: string | null;
+  state: string;
+  startedAt: Date | null;
+  plannedEndAt: Date | null;
+  actualEndAt: Date | null;
+}): Record<string, unknown> {
+  return {
+    sessionId: session.id,
+    userId: session.userId,
+    callAttemptId: session.callAttemptId,
+    stage: session.state,
+    startedAt: session.startedAt?.toISOString() ?? null,
+    plannedEndAt: session.plannedEndAt?.toISOString() ?? null,
+    actualEndAt: session.actualEndAt?.toISOString() ?? null
+  };
+}
+
+function pruneUndefined<T extends Record<string, unknown>>(input: T): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+}

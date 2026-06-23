@@ -1,32 +1,32 @@
-import { Body, Controller, Get, Post } from "@nestjs/common";
-import { MockAppService } from "../services/mock-app.service.js";
+import { Body, Controller, Get, Inject, Post } from "@nestjs/common";
+import { AppService } from "../services/app.service.js";
 
 @Controller("admin")
 export class AdminController {
-  constructor(private readonly app: MockAppService) {}
+  constructor(@Inject(AppService) private readonly app: AppService) {}
 
   @Get("dashboard")
-  dashboard(): Record<string, unknown> {
-    return { data: this.app.listAdminMetrics() };
+  async dashboard(): Promise<Record<string, unknown>> {
+    return { data: await this.app.listAdminMetrics() };
   }
 
   @Get("content/lesson-templates")
-  lessonTemplates(): Record<string, unknown> {
-    return { data: [{ slug: "hotel-checkin-a1", titleKo: "호텔 체크인", status: "PUBLISHED" }] };
+  async lessonTemplates(): Promise<Record<string, unknown>> {
+    return { data: await this.app.listLessonTemplates() };
   }
 
   @Post("content/lesson-templates")
-  createLessonTemplate(@Body() body: Record<string, unknown>): Record<string, unknown> {
-    return { data: { ...body, id: "mock-template", auditLogged: true } };
+  async createLessonTemplate(@Body() body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return { data: await this.app.createLessonTemplate(body) };
   }
 
   @Get("ai/prompt-versions")
-  promptVersions(): Record<string, unknown> {
-    return { data: [{ id: "prompt-v1", version: 1, active: true }] };
+  async promptVersions(): Promise<Record<string, unknown>> {
+    return { data: await this.app.listPromptVersions() };
   }
 
   @Get("feature-flags")
-  featureFlags(): Record<string, unknown> {
-    return { data: [{ key: "leagues", enabled: false }] };
+  async featureFlags(): Promise<Record<string, unknown>> {
+    return { data: await this.app.listFeatureFlags() };
   }
 }

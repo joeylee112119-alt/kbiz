@@ -1,18 +1,18 @@
-import { Body, Controller, Delete, Get, Patch, Post } from "@nestjs/common";
-import { MockAppService } from "../services/mock-app.service.js";
+import { Body, Controller, Delete, Get, Inject, Patch, Post } from "@nestjs/common";
+import { AppService } from "../services/app.service.js";
 
 @Controller()
 export class AuthController {
-  constructor(private readonly app: MockAppService) {}
+  constructor(@Inject(AppService) private readonly app: AppService) {}
 
   @Post("auth/guest")
-  guest(): Record<string, unknown> {
-    return { data: this.app.createGuest() };
+  async guest(): Promise<Record<string, unknown>> {
+    return { data: await this.app.createGuest() };
   }
 
   @Post("auth/refresh")
   refresh(): Record<string, unknown> {
-    return { data: { accessToken: `mock-access-${Date.now()}` } };
+    return { data: { refreshed: false, reason: "REFRESH_TOKEN_REQUIRED" } };
   }
 
   @Post("auth/logout")
@@ -22,17 +22,17 @@ export class AuthController {
 
   @Post("auth/link/apple")
   linkApple(): Record<string, unknown> {
-    return { data: { provider: "apple", linked: false, mode: "mock" } };
+    return { data: { provider: "apple", linked: false, reason: "APPLE_IDENTITY_TOKEN_REQUIRED" } };
   }
 
   @Post("auth/link/google")
   linkGoogle(): Record<string, unknown> {
-    return { data: { provider: "google", linked: false, mode: "mock" } };
+    return { data: { provider: "google", linked: false, reason: "GOOGLE_IDENTITY_TOKEN_REQUIRED" } };
   }
 
   @Get("me")
   me(): Record<string, unknown> {
-    return { data: { id: "mock-user", appState: "HOME" } };
+    return { data: { authenticated: false, reason: "USER_CONTEXT_REQUIRED" } };
   }
 
   @Patch("me")

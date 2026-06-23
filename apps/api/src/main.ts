@@ -3,9 +3,12 @@ import helmet from "helmet";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import { assertProductionSafety, loadConfig } from "@aiphone/config";
 import { AppModule } from "./modules/app.module.js";
 
 async function bootstrap(): Promise<void> {
+  const appConfig = loadConfig();
+  assertProductionSafety(appConfig);
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.setGlobalPrefix("v1");
   app.use(helmet());
@@ -20,7 +23,7 @@ async function bootstrap(): Promise<void> {
     .build();
   SwaggerModule.setup("docs", app, SwaggerModule.createDocument(app, config));
 
-  const port = Number(process.env.API_PORT ?? "4000");
+  const port = appConfig.apiPort;
   const host = process.env.API_HOST ?? "127.0.0.1";
   await app.listen(port, host);
 }

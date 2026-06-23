@@ -12,7 +12,8 @@ import { RealtimeController } from "../routes/realtime.controller.js";
 import { ReviewController } from "../routes/review.controller.js";
 import { SchedulesController } from "../routes/schedules.controller.js";
 import { TutorsController } from "../routes/tutors.controller.js";
-import { MockAppService } from "../services/mock-app.service.js";
+import { AppService } from "../services/app.service.js";
+import { PrismaService } from "../services/prisma.service.js";
 
 @Module({
   imports: [
@@ -32,7 +33,7 @@ import { MockAppService } from "../services/mock-app.service.js";
     SchedulesController,
     TutorsController
   ],
-  providers: [MockAppService],
-  exports: [MockAppService]
+  providers: [PrismaService, AppService],
+  exports: [AppService]
 })
 export class AppModule {}

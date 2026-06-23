@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Post, Put } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Post, Put } from "@nestjs/common";
 import type { LearnerProfile } from "@aiphone/contracts";
-import { MockAppService } from "../services/mock-app.service.js";
+import { AppService } from "../services/app.service.js";
 
 @Controller()
 export class OnboardingController {
-  constructor(private readonly app: MockAppService) {}
+  constructor(@Inject(AppService) private readonly app: AppService) {}
 
   @Get("onboarding/options")
   options(): Record<string, unknown> {
@@ -12,12 +12,12 @@ export class OnboardingController {
   }
 
   @Put("me/learner-profile")
-  learnerProfile(@Body() body: LearnerProfile & { userId?: string }): Record<string, unknown> {
-    return { data: this.app.saveProfile(body.userId ?? "mock-user", body) };
+  async learnerProfile(@Body() body: LearnerProfile & { userId: string }): Promise<Record<string, unknown>> {
+    return { data: await this.app.saveProfile(body.userId, body) };
   }
 
   @Post("onboarding/complete")
-  complete(): Record<string, unknown> {
-    return { data: { appState: "TRIAL_READY" } };
+  async complete(@Body() body: { userId: string }): Promise<Record<string, unknown>> {
+    return { data: await this.app.completeOnboarding(body.userId) };
   }
 }

@@ -1,37 +1,37 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
-import { MockAppService } from "../services/mock-app.service.js";
+import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
+import { AppService } from "../services/app.service.js";
 
 @Controller("calls")
 export class CallsController {
-  constructor(private readonly app: MockAppService) {}
+  constructor(@Inject(AppService) private readonly app: AppService) {}
 
   @Get(":id")
-  get(@Param("id") id: string): Record<string, unknown> {
-    return { data: { id } };
+  async get(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.getCall(id) };
   }
 
   @Post("start-now")
-  startNow(@Body() body: { userId?: string }): Record<string, unknown> {
-    return { data: this.app.startNow(body.userId ?? "mock-user") };
+  async startNow(@Body() body: { userId: string }): Promise<Record<string, unknown>> {
+    return { data: await this.app.startNow(body.userId) };
   }
 
   @Post(":id/accept")
-  accept(@Param("id") id: string): Record<string, unknown> {
-    return { data: this.app.acceptCall(id) };
+  async accept(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.acceptCall(id) };
   }
 
   @Post(":id/decline")
-  decline(@Param("id") id: string): Record<string, unknown> {
-    return { data: this.app.declineCall(id) };
+  async decline(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.declineCall(id) };
   }
 
   @Post(":id/snooze")
-  snooze(@Param("id") id: string): Record<string, unknown> {
-    return { data: this.app.snoozeCall(id) };
+  async snooze(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.snoozeCall(id) };
   }
 
   @Post(":id/end")
-  end(@Param("id") id: string): Record<string, unknown> {
-    return { data: { id, status: "COMPLETED" } };
+  async end(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.endCall(id) };
   }
 }

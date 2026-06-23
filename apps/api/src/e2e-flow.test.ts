@@ -1,32 +1,45 @@
-import { describe, expect, it, beforeEach } from "vitest";
-import { AuthController } from "./routes/auth.controller.js";
-import { OnboardingController } from "./routes/onboarding.controller.js";
-import { SchedulesController } from "./routes/schedules.controller.js";
-import { CallsController } from "./routes/calls.controller.js";
-import { LessonsController } from "./routes/lessons.controller.js";
-import { MockAppService } from "./services/mock-app.service.js";
+import { beforeAll, afterAll, describe, expect, it } from "vitest";
+import { Test } from "@nestjs/testing";
+import type { INestApplication } from "@nestjs/common";
+import request from "supertest";
+import { PrismaClient } from "@aiphone/database";
+import { AppModule } from "./modules/app.module.js";
 
-describe("mock API end-to-end lesson flow", () => {
-  let auth: AuthController;
-  let onboarding: OnboardingController;
-  let schedules: SchedulesController;
-  let calls: CallsController;
-  let lessons: LessonsController;
+const runDbE2e = Boolean(process.env.DATABASE_URL);
 
-  beforeEach(() => {
-    const service = new MockAppService();
-    auth = new AuthController(service);
-    onboarding = new OnboardingController(service);
-    schedules = new SchedulesController(service);
-    calls = new CallsController(service);
-    lessons = new LessonsController(service);
+describe.runIf(runDbE2e)("API HTTP + PostgreSQL end-to-end lesson flow", () => {
+  let app: INestApplication;
+  let prisma: PrismaClient;
+
+  async function createApp(): Promise<INestApplication> {
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const created = moduleRef.createNestApplication();
+    created.setGlobalPrefix("v1");
+    await created.init();
+    return created;
+  }
+
+  beforeAll(async () => {
+    process.env.APP_MODE = "mock";
+    process.env.MOCK_REALTIME = "true";
+    prisma = new PrismaClient();
+    await prisma.$connect();
+    await resetMutableData(prisma);
+    app = await createApp();
   });
 
-  it("guest auth to review item generation", async () => {
-    const guest = auth.guest();
-    const userId = ((guest.data as Record<string, unknown>).user as Record<string, unknown>).id as string;
+  afterAll(async () => {
+    await app?.close();
+    await prisma?.$disconnect();
+  });
 
-    onboarding.learnerProfile({
+  it("persists guest auth through review generation and recovers after app restart", async () => {
+    const guest = await request(app.getHttpServer()).post("/v1/auth/guest").send().expect(201);
+    const userId = guest.body.data.user.id as string;
+
+    await request(app.getHttpServer())
+      .put("/v1/me/learner-profile")
+      .send({
         userId,
         level: "A1",
         englishVariant: "AMERICAN",
@@ -36,39 +49,103 @@ describe("mock API end-to-end lesson flow", () => {
         interests: ["travel"],
         dailyStudyMinutes: 15,
         timezone: "Asia/Seoul"
-      });
+      })
+      .expect(200);
 
-    onboarding.complete();
+    await request(app.getHttpServer()).post("/v1/onboarding/complete").send({ userId }).expect(201);
 
-    const schedule = schedules.create({
+    const schedule = await request(app.getHttpServer())
+      .post("/v1/call-schedules")
+      .send({
         userId,
         weekdays: [1, 3, 5],
         localTime: "20:30",
         timezone: "Asia/Seoul",
         lessonDurationMinutes: 15,
         holidayPauseEnabled: true
-      });
-    expect((schedule.data as Record<string, unknown>).id).toBeTruthy();
+      })
+      .expect(201);
+    expect(schedule.body.data.id).toBeTruthy();
 
-    const call = calls.startNow({ userId });
-    const callId = (call.data as Record<string, unknown>).id as string;
+    const call = await request(app.getHttpServer()).post("/v1/calls/start-now").send({ userId }).expect(201);
+    const callId = call.body.data.id as string;
 
-    const accepted = calls.accept(callId);
-    const lessonSessionId = (accepted.data as Record<string, unknown>).lessonSessionId as string;
+    const accepted = await request(app.getHttpServer()).post(`/v1/calls/${callId}/accept`).send().expect(201);
+    const lessonSessionId = accepted.body.data.lessonSessionId as string;
     expect(lessonSessionId).toBeTruthy();
 
-    lessons.start(lessonSessionId);
-    const transitioned = lessons.stageTransition(lessonSessionId);
-    expect(((transitioned.data as Record<string, unknown>).decision as Record<string, unknown>).nextStage).toBe("WARM_UP");
+    await request(app.getHttpServer()).post(`/v1/lesson-sessions/${lessonSessionId}/start`).send().expect(201);
+    const transitioned = await request(app.getHttpServer()).post(`/v1/lesson-sessions/${lessonSessionId}/stage-transition`).send().expect(201);
+    expect(transitioned.body.data.decision.to).toBe("WARM_UP");
 
-    lessons.transcriptEvent(lessonSessionId, { transcript: "I'd like to check in please." });
+    await request(app.getHttpServer())
+      .post(`/v1/lesson-sessions/${lessonSessionId}/transcript-events`)
+      .send({ transcript: "I'd like to check in please." })
+      .expect(201);
 
-    lessons.end(lessonSessionId);
-    lessons.generateReport(lessonSessionId);
-    const report = lessons.report(lessonSessionId);
-    expect((report.data as Record<string, unknown>).summary).toContain("호텔 체크인");
+    await request(app.getHttpServer()).post(`/v1/lesson-sessions/${lessonSessionId}/end`).send().expect(201);
+    await request(app.getHttpServer()).post(`/v1/lesson-sessions/${lessonSessionId}/report/generate`).send().expect(201);
 
-    const review = lessons.generateReview(lessonSessionId);
-    expect(review.data).toHaveLength(1);
+    const report = await request(app.getHttpServer()).get(`/v1/lesson-sessions/${lessonSessionId}/report`).expect(200);
+    expect(report.body.data.summary).toContain("호텔 체크인");
+
+    const review = await request(app.getHttpServer()).post(`/v1/lesson-sessions/${lessonSessionId}/review-items/generate`).send().expect(201);
+    expect(review.body.data).toHaveLength(1);
+
+    await app.close();
+    app = await createApp();
+
+    const restoredCall = await request(app.getHttpServer()).get(`/v1/calls/${callId}`).expect(200);
+    expect(restoredCall.body.data.status).toBe("COMPLETED");
+
+    const restoredSession = await request(app.getHttpServer()).get(`/v1/lesson-sessions/${lessonSessionId}`).expect(200);
+    expect(restoredSession.body.data.stage).toBe("COMPLETED");
+
+    const restoredReport = await request(app.getHttpServer()).get(`/v1/lesson-sessions/${lessonSessionId}/report`).expect(200);
+    expect(restoredReport.body.data.summary).toContain("호텔 체크인");
+
+    const dbCounts = {
+      users: await prisma.user.count(),
+      schedules: await prisma.callSchedule.count(),
+      calls: await prisma.callAttempt.count(),
+      sessions: await prisma.lessonSession.count(),
+      transcriptSegments: await prisma.transcriptSegment.count(),
+      reports: await prisma.lessonReport.count(),
+      reviewItems: await prisma.reviewItem.count(),
+      outboxEvents: await prisma.outboxEvent.count()
+    };
+    expect(dbCounts).toMatchObject({
+      users: 1,
+      schedules: 1,
+      calls: 1,
+      sessions: 1,
+      transcriptSegments: 1,
+      reports: 1,
+      reviewItems: 1
+    });
+    expect(dbCounts.outboxEvents).toBeGreaterThanOrEqual(4);
   });
 });
+
+async function resetMutableData(prisma: PrismaClient): Promise<void> {
+  await prisma.$transaction([
+    prisma.outboxEvent.deleteMany(),
+    prisma.auditLog.deleteMany(),
+    prisma.reviewItem.deleteMany(),
+    prisma.lessonReport.deleteMany(),
+    prisma.backchannelEvent.deleteMany(),
+    prisma.transcriptSegment.deleteMany(),
+    prisma.utterance.deleteMany(),
+    prisma.lessonStageSession.deleteMany(),
+    prisma.lessonSession.deleteMany(),
+    prisma.notificationLog.deleteMany(),
+    prisma.callAttempt.deleteMany(),
+    prisma.callSchedule.deleteMany(),
+    prisma.pushToken.deleteMany(),
+    prisma.device.deleteMany(),
+    prisma.learnerProfile.deleteMany(),
+    prisma.refreshToken.deleteMany(),
+    prisma.userIdentity.deleteMany(),
+    prisma.user.deleteMany()
+  ]);
+}

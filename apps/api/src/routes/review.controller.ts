@@ -1,15 +1,18 @@
-import { Controller, Delete, Get, Param, Post } from "@nestjs/common";
+import { Controller, Delete, Get, Inject, Param, Post } from "@nestjs/common";
+import { AppService } from "../services/app.service.js";
 
 @Controller()
 export class ReviewController {
+  constructor(@Inject(AppService) private readonly app: AppService) {}
+
   @Get("review-items")
-  list(): Record<string, unknown> {
-    return { data: [{ id: "review-1", prompt: "Could I get a quiet room?", status: "NEW", nextReviewAt: new Date().toISOString() }] };
+  async list(): Promise<Record<string, unknown>> {
+    return { data: await this.app.listReviewItems() };
   }
 
   @Post("review-items/:id/answer")
-  answer(@Param("id") id: string): Record<string, unknown> {
-    return { data: { id, status: "LEARNING", intervalDays: 2 } };
+  async answer(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.answerReviewItem(id) };
   }
 
   @Post("expressions/:id/save")

@@ -1,24 +1,27 @@
-import { Body, Controller, Delete, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Inject, Param, Patch, Post } from "@nestjs/common";
+import { AppService } from "../services/app.service.js";
 
 @Controller("devices")
 export class DevicesController {
+  constructor(@Inject(AppService) private readonly app: AppService) {}
+
   @Post()
-  create(@Body() body: Record<string, unknown>): Record<string, unknown> {
-    return { data: { id: "mock-device", ...body } };
+  async create(@Body() body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return { data: await this.app.createDevice(body) };
   }
 
   @Patch(":id")
-  update(@Param("id") id: string, @Body() body: Record<string, unknown>): Record<string, unknown> {
-    return { data: { id, ...body } };
+  async update(@Param("id") id: string, @Body() body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return { data: await this.app.updateDevice(id, body) };
   }
 
   @Post(":id/push-tokens")
-  pushToken(@Param("id") id: string): Record<string, unknown> {
-    return { data: { id: "mock-push-token", deviceId: id, stored: true } };
+  async pushToken(@Param("id") id: string, @Body() body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return { data: await this.app.storePushToken(id, body) };
   }
 
   @Delete(":id/push-tokens/:tokenId")
-  deletePushToken(@Param("id") id: string, @Param("tokenId") tokenId: string): Record<string, unknown> {
-    return { data: { id, tokenId, deleted: true } };
+  async deletePushToken(@Param("id") id: string, @Param("tokenId") tokenId: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.deletePushToken(id, tokenId) };
   }
 }

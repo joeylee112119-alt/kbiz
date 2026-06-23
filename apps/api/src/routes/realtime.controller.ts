@@ -1,9 +1,9 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
-import { MockAppService } from "../services/mock-app.service.js";
+import { Body, Controller, Get, Inject, Param, Post } from "@nestjs/common";
+import { AppService } from "../services/app.service.js";
 
 @Controller("realtime")
 export class RealtimeController {
-  constructor(private readonly app: MockAppService) {}
+  constructor(@Inject(AppService) private readonly app: AppService) {}
 
   @Get("defaults")
   defaults(): Record<string, unknown> {
@@ -11,8 +11,8 @@ export class RealtimeController {
   }
 
   @Post("sessions")
-  session(@Body() body: { lessonSessionId: string; deviceId: string; localSdp?: string }): Record<string, unknown> {
-    return { data: this.app.createRealtimeSession(body.lessonSessionId, body.deviceId, body.localSdp) };
+  async session(@Body() body: { lessonSessionId: string; deviceId: string; localSdp?: string }): Promise<Record<string, unknown>> {
+    return { data: await this.app.createRealtimeSession(body.lessonSessionId, body.deviceId, body.localSdp) };
   }
 
   @Post("sessions/:id/events")

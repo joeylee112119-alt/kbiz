@@ -1,38 +1,38 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post } from "@nestjs/common";
 import type { CallScheduleRequest } from "@aiphone/contracts";
-import { MockAppService } from "../services/mock-app.service.js";
+import { AppService } from "../services/app.service.js";
 
 @Controller("call-schedules")
 export class SchedulesController {
-  constructor(private readonly app: MockAppService) {}
+  constructor(@Inject(AppService) private readonly app: AppService) {}
 
   @Get()
-  list(): Record<string, unknown> {
-    return { data: [] };
+  async list(): Promise<Record<string, unknown>> {
+    return { data: await this.app.listSchedules() };
   }
 
   @Post()
-  create(@Body() body: CallScheduleRequest & { userId?: string }): Record<string, unknown> {
-    return { data: this.app.createSchedule(body.userId ?? "mock-user", body) };
+  async create(@Body() body: CallScheduleRequest & { userId: string }): Promise<Record<string, unknown>> {
+    return { data: await this.app.createSchedule(body.userId, body) };
   }
 
   @Patch(":id")
-  update(@Param("id") id: string, @Body() body: Record<string, unknown>): Record<string, unknown> {
-    return { data: { id, ...body } };
+  async update(@Param("id") id: string, @Body() body: Partial<CallScheduleRequest>): Promise<Record<string, unknown>> {
+    return { data: await this.app.updateSchedule(id, body) };
   }
 
   @Delete(":id")
-  delete(@Param("id") id: string): Record<string, unknown> {
-    return { data: { id, deleted: true } };
+  async delete(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.deleteSchedule(id) };
   }
 
   @Post(":id/pause")
-  pause(@Param("id") id: string): Record<string, unknown> {
-    return { data: { id, paused: true } };
+  async pause(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.pauseSchedule(id) };
   }
 
   @Post(":id/resume")
-  resume(@Param("id") id: string): Record<string, unknown> {
-    return { data: { id, paused: false } };
+  async resume(@Param("id") id: string): Promise<Record<string, unknown>> {
+    return { data: await this.app.resumeSchedule(id) };
   }
 }
