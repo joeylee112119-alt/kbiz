@@ -10,13 +10,12 @@ datasource db {
 enum AppState {
   ONBOARDING
   TRIAL_READY
-  TRIAL_CALL
+  TRIAL_LESSON
   TRIAL_RESULT
   SUBSCRIPTION
   HOME
-  CALL_SCHEDULED
-  CALL_RINGING
-  CALL_CONNECTING
+  LESSON_SCHEDULED
+  LESSON_READY
   LESSON_ACTIVE
   LESSON_FINISHING
   RESULT_GENERATING
@@ -31,20 +30,36 @@ enum CefrLevel {
   B2
 }
 
-enum CallAttemptStatus {
-  CREATED
-  PUSH_SENT
-  RINGING
-  ACCEPTED
-  CONNECTING
+enum LessonOccurrenceStatus {
+  SCHEDULED
+  NOTIFICATION_PENDING
+  NOTIFIED
+  READY
+  SNOOZED
+  STARTING
   ACTIVE
   COMPLETED
-  DECLINED
-  SNOOZED
+  SKIPPED
   MISSED
-  FAILED
   CANCELLED
   EXPIRED
+  FAILED
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  OPENED
+  ACTIONED
+  FAILED
+  EXPIRED
+}
+
+enum NotificationType {
+  LESSON_PRE_REMINDER
+  LESSON_REMINDER
+  LESSON_SNOOZE_REMINDER
+  REPORT_READY
 }
 
 enum LessonStageType {
@@ -99,8 +114,8 @@ model User {
   refreshTokens     RefreshToken[]
   learnerProfile    LearnerProfile?
   devices           Device[]
-  callSchedules     CallSchedule[]
-  callAttempts      CallAttempt[]
+  lessonSchedules   LessonSchedule[]
+  lessonOccurrences LessonOccurrence[]
   lessonSessions    LessonSession[]
   userVocabulary    UserVocabulary[]
   reviewItems       ReviewItem[]
@@ -169,7 +184,8 @@ model Tutor {
   updatedAt       DateTime         @updatedAt
   voices          TutorVoice[]
   profiles        LearnerProfile[]
-  callAttempts    CallAttempt[]
+  lessonSchedules LessonSchedule[]
+  lessonOccurrences LessonOccurrence[]
   lessonSessions  LessonSession[]
   backchannelClips BackchannelClip[]
 }
@@ -218,6 +234,7 @@ model Device {
   updatedAt      DateTime    @updatedAt
   user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   pushTokens     PushToken[]
+  notificationDeliveries NotificationDelivery[]
 
   @@unique([userId, deviceIdHash])
 }
@@ -227,65 +244,68 @@ model PushToken {
   deviceId  String    @db.Uuid
   provider  String
   tokenHash String
+  tokenValue String?
   tokenLast4 String
   expiresAt DateTime?
   revokedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  notificationDeliveries NotificationDelivery[]
 
   @@unique([provider, tokenHash])
   @@index([deviceId])
 }
 
-model CallSchedule {
-  id                    String        @id @default(uuid()) @db.Uuid
-  userId                String        @db.Uuid
-  weekdays              Int[]
-  localTime             String
-  timezone              String
-  lessonDurationMinutes Int           @default(15)
-  holidayPauseEnabled   Boolean       @default(true)
-  pausedAt              DateTime?
-  nextRunAt             DateTime
-  retryPolicy           Json
-  version               Int           @default(1)
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
-  deletedAt             DateTime?
-  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  attempts              CallAttempt[]
+model LessonSchedule {
+  id                 String             @id @default(uuid()) @db.Uuid
+  userId             String             @db.Uuid
+  tutorId            String             @db.Uuid
+  timezone           String
+  daysOfWeek         Int[]
+  localTime          String
+  durationMinutes    Int                @default(15)
+  preReminderMinutes Int?
+  enabled            Boolean            @default(true)
+  nextRunAt          DateTime
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tutor              Tutor              @relation(fields: [tutorId], references: [id], onDelete: Restrict)
+  occurrences        LessonOccurrence[]
 
   @@index([nextRunAt])
-  @@index([userId, deletedAt])
+  @@index([userId, enabled])
 }
 
-model CallAttempt {
-  id             String            @id @default(uuid()) @db.Uuid
-  userId         String            @db.Uuid
-  scheduleId     String?           @db.Uuid
-  tutorId        String            @db.Uuid
-  status         CallAttemptStatus @default(CREATED)
-  startsAt       DateTime
-  expiresAt      DateTime
-  acceptedAt     DateTime?
-  endedAt        DateTime?
-  iosCallKitUuid String?
-  androidCallId  String?
-  retryCount     Int               @default(0)
-  idempotencyKey String?
-  version        Int               @default(1)
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  schedule       CallSchedule?     @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
-  tutor          Tutor             @relation(fields: [tutorId], references: [id], onDelete: Restrict)
-  lessonSession  LessonSession?
-  notifications  NotificationLog[]
+model LessonOccurrence {
+  id               String                 @id @default(uuid()) @db.Uuid
+  scheduleId       String?                @db.Uuid
+  userId           String                 @db.Uuid
+  lessonTemplateId String                 @db.Uuid
+  tutorId          String                 @db.Uuid
+  scheduledAt      DateTime
+  availableFrom    DateTime
+  expiresAt        DateTime
+  snoozeCount      Int                    @default(0)
+  status           LessonOccurrenceStatus @default(SCHEDULED)
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  version          Int                    @default(1)
+  idempotencyKey   String?
+  schedule         LessonSchedule?        @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonTemplate   LessonTemplate         @relation(fields: [lessonTemplateId], references: [id], onDelete: Restrict)
+  tutor            Tutor                  @relation(fields: [tutorId], references: [id], onDelete: Restrict)
+  lessonSession    LessonSession?
+  notifications    NotificationDelivery[]
 
   @@unique([idempotencyKey])
-  @@index([scheduleId, startsAt])
+  @@index([scheduleId, scheduledAt])
   @@index([userId, status])
+  @@index([scheduledAt, status])
 }
 
 model LessonTemplate {
@@ -299,6 +319,7 @@ model LessonTemplate {
   createdAt   DateTime                @default(now())
   updatedAt   DateTime                @updatedAt
   versions    LessonTemplateVersion[]
+  occurrences LessonOccurrence[]
 }
 
 model LessonTemplateVersion {
@@ -378,7 +399,7 @@ model TargetExpression {
 model LessonSession {
   id                      String                  @id @default(uuid()) @db.Uuid
   userId                  String                  @db.Uuid
-  callAttemptId           String?                 @unique @db.Uuid
+  occurrenceId            String?                 @unique @db.Uuid
   tutorId                 String                  @db.Uuid
   lessonTemplateVersionId String?                 @db.Uuid
   state                   LessonStageType         @default(CHECK_IN)
@@ -389,7 +410,7 @@ model LessonSession {
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt
   user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  callAttempt             CallAttempt?            @relation(fields: [callAttemptId], references: [id], onDelete: SetNull)
+  occurrence              LessonOccurrence?       @relation(fields: [occurrenceId], references: [id], onDelete: SetNull)
   tutor                   Tutor                   @relation(fields: [tutorId], references: [id], onDelete: Restrict)
   lessonTemplateVersion   LessonTemplateVersion?  @relation(fields: [lessonTemplateVersionId], references: [id], onDelete: SetNull)
   stageSessions           LessonStageSession[]
@@ -578,18 +599,32 @@ model Entitlement {
   @@index([userId, state])
 }
 
-model NotificationLog {
-  id            String       @id @default(uuid()) @db.Uuid
-  callAttemptId String?      @db.Uuid
-  provider      String
-  type          String
-  status        String
-  externalId    String?
-  errorCode     String?
-  createdAt     DateTime     @default(now())
-  callAttempt   CallAttempt? @relation(fields: [callAttemptId], references: [id], onDelete: SetNull)
+model NotificationDelivery {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  occurrenceId       String                     @db.Uuid
+  deviceId           String?                    @db.Uuid
+  pushTokenId        String?                    @db.Uuid
+  notificationType   NotificationType
+  provider           String
+  providerMessageId  String?
+  status             NotificationDeliveryStatus @default(PENDING)
+  scheduledFor       DateTime
+  sentAt             DateTime?
+  openedAt           DateTime?
+  actionedAt         DateTime?
+  failedAt           DateTime?
+  failureCode        String?
+  failureMessage     String?
+  idempotencyKey     String
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  occurrence         LessonOccurrence           @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  device             Device?                    @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  pushToken          PushToken?                 @relation(fields: [pushTokenId], references: [id], onDelete: SetNull)
 
-  @@index([callAttemptId, createdAt])
+  @@unique([idempotencyKey])
+  @@index([occurrenceId, createdAt])
+  @@index([status, scheduledFor])
 }
 
 model PromptTemplate {

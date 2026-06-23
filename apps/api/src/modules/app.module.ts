@@ -3,9 +3,10 @@ import { ConfigModule } from "@nestjs/config";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { AdminController } from "../routes/admin.controller.js";
 import { AuthController } from "../routes/auth.controller.js";
-import { CallsController } from "../routes/calls.controller.js";
 import { DevicesController } from "../routes/devices.controller.js";
+import { LessonOccurrencesController } from "../routes/lesson-occurrences.controller.js";
 import { LessonsController } from "../routes/lessons.controller.js";
+import { NotificationsController } from "../routes/notifications.controller.js";
 import { OnboardingController } from "../routes/onboarding.controller.js";
 import { ProgressController } from "../routes/progress.controller.js";
 import { RealtimeController } from "../routes/realtime.controller.js";
@@ -23,9 +24,10 @@ import { PrismaService } from "../services/prisma.service.js";
   controllers: [
     AdminController,
     AuthController,
-    CallsController,
     DevicesController,
+    LessonOccurrencesController,
     LessonsController,
+    NotificationsController,
     OnboardingController,
     ProgressController,
     RealtimeController,

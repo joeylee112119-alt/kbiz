@@ -1,8 +1,8 @@
 import { Body, Controller, Delete, Get, Inject, Param, Patch, Post } from "@nestjs/common";
-import type { CallScheduleRequest } from "@aiphone/contracts";
+import type { LessonScheduleRequest } from "@aiphone/contracts";
 import { AppService } from "../services/app.service.js";
 
-@Controller("call-schedules")
+@Controller("lesson-schedules")
 export class SchedulesController {
   constructor(@Inject(AppService) private readonly app: AppService) {}
 
@@ -12,12 +12,12 @@ export class SchedulesController {
   }
 
   @Post()
-  async create(@Body() body: CallScheduleRequest & { userId: string }): Promise<Record<string, unknown>> {
+  async create(@Body() body: LessonScheduleRequest & { userId: string }): Promise<Record<string, unknown>> {
     return { data: await this.app.createSchedule(body.userId, body) };
   }
 
   @Patch(":id")
-  async update(@Param("id") id: string, @Body() body: Partial<CallScheduleRequest>): Promise<Record<string, unknown>> {
+  async update(@Param("id") id: string, @Body() body: Partial<LessonScheduleRequest>): Promise<Record<string, unknown>> {
     return { data: await this.app.updateSchedule(id, body) };
   }
 

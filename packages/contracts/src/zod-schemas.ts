@@ -1,11 +1,12 @@
 import { z } from "zod";
 
-export const callScheduleRequestSchema = z.object({
-  weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+export const lessonScheduleRequestSchema = z.object({
+  daysOfWeek: z.array(z.number().int().min(0).max(6)).min(1).max(7),
   localTime: z.string().regex(/^\d{2}:\d{2}$/),
   timezone: z.string().min(1),
-  lessonDurationMinutes: z.number().int().min(5).max(30),
-  holidayPauseEnabled: z.boolean()
+  durationMinutes: z.number().int().min(5).max(30),
+  preReminderMinutes: z.number().int().min(0).max(60).nullable().optional(),
+  enabled: z.boolean().optional()
 });
 
 export const reportSchema = z.object({

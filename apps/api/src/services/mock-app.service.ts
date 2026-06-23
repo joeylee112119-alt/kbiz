@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type { CallAttempt, CallScheduleRequest, LessonReport, LearnerProfile, Tutor } from "@aiphone/contracts";
+import type { LessonOccurrence, LessonReport, LessonScheduleRequest, LearnerProfile, Tutor } from "@aiphone/contracts";
 import { onboardingOptions, validateLessonReport } from "@aiphone/contracts";
 import { LessonOrchestrator, defaultStageDurations } from "@aiphone/lesson-engine";
 import { buildRealtimeSessionUpdate } from "@aiphone/realtime-client";
@@ -15,8 +15,8 @@ type UserRecord = {
 @Injectable()
 export class MockAppService {
   private users = new Map<string, UserRecord>();
-  private schedules = new Map<string, CallScheduleRequest & { id: string; userId: string; nextRunAt: string }>();
-  private calls = new Map<string, CallAttempt>();
+  private schedules = new Map<string, LessonScheduleRequest & { id: string; userId: string; nextRunAt: string }>();
+  private occurrences = new Map<string, LessonOccurrence>();
   private sessions = new Map<string, LessonOrchestrator>();
   private reports = new Map<string, LessonReport>();
   private reviewItems = new Map<string, Array<Record<string, unknown>>>();
@@ -28,13 +28,6 @@ export class MockAppService {
       personaKo: "차분하고 명확하게 말해주는 미국식 영어 튜터",
       imageUrl: "/assets/tutors/emma.png",
       defaultVoiceId: "marin"
-    },
-    {
-      id: "tutor-noah",
-      name: "Noah",
-      personaKo: "따뜻하게 질문을 이어가는 영국식 영어 튜터",
-      imageUrl: "/assets/tutors/noah.png",
-      defaultVoiceId: "cedar"
     }
   ];
 
@@ -42,11 +35,7 @@ export class MockAppService {
     const id = randomUUID();
     const user = { id, displayName: "Guest Learner", appState: "ONBOARDING", profile: null };
     this.users.set(id, user);
-    return {
-      user,
-      accessToken: `mock-access-${id}`,
-      refreshToken: `mock-refresh-${id}`
-    };
+    return { user, accessToken: `mock-access-${id}`, refreshToken: `mock-refresh-${id}` };
   }
 
   getOptions(): typeof onboardingOptions {
@@ -60,66 +49,52 @@ export class MockAppService {
     return user;
   }
 
-  createSchedule(userId: string, request: CallScheduleRequest): Record<string, unknown> {
+  createSchedule(userId: string, request: LessonScheduleRequest): Record<string, unknown> {
     this.ensureUser(userId);
     const id = randomUUID();
-    const nextRunAt = this.computeNextRunAt(request.localTime, request.timezone);
+    const nextRunAt = this.computeNextRunAt(request.localTime);
     const schedule = { ...request, id, userId, nextRunAt };
     this.schedules.set(id, schedule);
-    return schedule;
+    const occurrence = this.createOccurrence(userId, id, nextRunAt);
+    return { ...schedule, occurrence };
   }
 
-  startNow(userId: string): CallAttempt {
+  startNowOccurrence(userId: string): LessonOccurrence {
     this.ensureUser(userId);
-    const now = new Date();
-    const call: CallAttempt = {
-      id: randomUUID(),
-      scheduleId: null,
-      status: "RINGING",
-      startsAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + 45_000).toISOString(),
-      tutorId: "tutor-emma",
-      topicKo: "호텔 체크인",
-      iosCallKitUuid: randomUUID(),
-      androidCallId: randomUUID()
-    };
-    this.calls.set(call.id, call);
-    return call;
+    return this.createOccurrence(userId, null, new Date().toISOString(), "READY");
   }
 
-  acceptCall(callId: string): Record<string, unknown> {
-    const call = this.ensureCall(callId);
-    if (new Date(call.expiresAt).getTime() < Date.now()) {
-      call.status = "EXPIRED";
-      return { call, error: "CALL_EXPIRED" };
-    }
-    call.status = "ACCEPTED";
+  openOccurrence(occurrenceId: string): LessonOccurrence {
+    const occurrence = this.ensureOccurrence(occurrenceId);
+    occurrence.status = "READY";
+    return occurrence;
+  }
+
+  startOccurrence(occurrenceId: string): Record<string, unknown> {
+    const occurrence = this.ensureOccurrence(occurrenceId);
+    occurrence.status = "STARTING";
     const lessonSessionId = randomUUID();
     this.sessions.set(lessonSessionId, this.createOrchestrator(lessonSessionId));
-    return { call, lessonSessionId };
+    return { occurrence, lessonSessionId };
   }
 
-  declineCall(callId: string): CallAttempt {
-    const call = this.ensureCall(callId);
-    call.status = "DECLINED";
-    return call;
+  snoozeOccurrence(occurrenceId: string): LessonOccurrence {
+    const occurrence = this.ensureOccurrence(occurrenceId);
+    occurrence.status = "SNOOZED";
+    return occurrence;
   }
 
-  snoozeCall(callId: string): CallAttempt {
-    const call = this.ensureCall(callId);
-    call.status = "SNOOZED";
-    call.startsAt = new Date(Date.now() + 10 * 60_000).toISOString();
-    call.expiresAt = new Date(Date.now() + 10 * 60_000 + 45_000).toISOString();
-    return call;
+  skipOccurrence(occurrenceId: string): LessonOccurrence {
+    const occurrence = this.ensureOccurrence(occurrenceId);
+    occurrence.status = "SKIPPED";
+    return occurrence;
   }
 
   createRealtimeSession(lessonSessionId: string, deviceId: string, localSdp?: string): Record<string, unknown> {
     if (process.env.MOCK_REALTIME !== "false") {
       return { mode: "mock", sessionId: lessonSessionId, deviceId, dataChannelName: "mock-oai-events" };
     }
-    if (localSdp) {
-      return { mode: "openai_unified_sdp", sessionId: lessonSessionId, sdpAnswer: "PROVIDED_BY_OPENAI_BACKEND" };
-    }
+    if (localSdp) return { mode: "openai_unified_sdp", sessionId: lessonSessionId, sdpAnswer: "PROVIDED_BY_OPENAI_BACKEND" };
     return { mode: "openai_ephemeral_secret", sessionId: lessonSessionId, clientSecret: "SERVER_MINTED_ONLY", expiresAt: new Date(Date.now() + 60_000).toISOString() };
   }
 
@@ -165,8 +140,7 @@ export class MockAppService {
   }
 
   startLessonSession(lessonSessionId: string): Record<string, unknown> {
-    const orchestrator = this.ensureSession(lessonSessionId);
-    return orchestrator.getState();
+    return this.ensureSession(lessonSessionId).getState();
   }
 
   advanceLessonStage(lessonSessionId: string): Record<string, unknown> {
@@ -176,8 +150,7 @@ export class MockAppService {
   }
 
   recordTranscriptEvent(lessonSessionId: string, transcript: string): Record<string, unknown> {
-    const orchestrator = this.ensureSession(lessonSessionId);
-    const state = orchestrator.recordUtterance({
+    const state = this.ensureSession(lessonSessionId).recordUtterance({
       speaker: "USER",
       transcript,
       durationMs: 1500,
@@ -187,8 +160,7 @@ export class MockAppService {
   }
 
   finishLessonSession(lessonSessionId: string): Record<string, unknown> {
-    const orchestrator = this.ensureSession(lessonSessionId);
-    return orchestrator.finishLesson("e2e_finish");
+    return this.ensureSession(lessonSessionId).finishLesson("e2e_finish");
   }
 
   generateReviewItems(lessonSessionId: string): Array<Record<string, unknown>> {
@@ -204,15 +176,43 @@ export class MockAppService {
   }
 
   listAdminMetrics(): Record<string, number> {
+    const missed = [...this.occurrences.values()].filter((occurrence) => occurrence.status === "MISSED").length;
+    const started = [...this.occurrences.values()].filter((occurrence) => occurrence.status === "STARTING" || occurrence.status === "ACTIVE" || occurrence.status === "COMPLETED").length;
     return {
       dailyActiveUsers: this.users.size,
-      scheduledCalls: this.schedules.size,
-      missedCalls: [...this.calls.values()].filter((call) => call.status === "MISSED").length,
-      callAnswerRate: 0.78,
+      scheduledLessons: this.schedules.size,
+      pushSent: 0,
+      reminderOpened: 0,
+      readyViews: [...this.occurrences.values()].filter((occurrence) => occurrence.status === "READY").length,
+      lessonStarted: started,
       lessonCompletionRate: 0.71,
+      notificationClickRate: 0,
+      clickToLessonStartRate: 0,
+      completionRate: 0,
+      snoozeRate: 0,
+      skipRate: 0,
+      missedRate: missed,
       averageUserSpeakingRatio: 0.63,
       realtimeErrorRate: 0.01
     };
+  }
+
+  private createOccurrence(userId: string, scheduleId: string | null, scheduledAtIso: string, status: LessonOccurrence["status"] = "SCHEDULED"): LessonOccurrence {
+    const scheduledAt = new Date(scheduledAtIso);
+    const occurrence: LessonOccurrence = {
+      id: randomUUID(),
+      scheduleId,
+      status,
+      scheduledAt: scheduledAt.toISOString(),
+      availableFrom: new Date(scheduledAt.getTime() - 10 * 60_000).toISOString(),
+      expiresAt: new Date(scheduledAt.getTime() + 30 * 60_000).toISOString(),
+      tutorId: "tutor-emma",
+      lessonTemplateId: "hotel-checkin-a1",
+      topicKo: "호텔 체크인"
+    };
+    this.ensureUser(userId).appState = status === "READY" ? "LESSON_READY" : "LESSON_SCHEDULED";
+    this.occurrences.set(occurrence.id, occurrence);
+    return occurrence;
   }
 
   private ensureUser(userId: string): UserRecord {
@@ -223,15 +223,13 @@ export class MockAppService {
     return created;
   }
 
-  private ensureCall(callId: string): CallAttempt {
-    const call = this.calls.get(callId);
-    if (!call) {
-      throw new Error("CALL_NOT_FOUND");
-    }
-    return call;
+  private ensureOccurrence(occurrenceId: string): LessonOccurrence {
+    const occurrence = this.occurrences.get(occurrenceId);
+    if (!occurrence) throw new Error("OCCURRENCE_NOT_FOUND");
+    return occurrence;
   }
 
-  private computeNextRunAt(localTime: string, _timezone: string): string {
+  private computeNextRunAt(localTime: string): string {
     const [hour = "20", minute = "30"] = localTime.split(":");
     const next = new Date();
     next.setUTCHours(Number(hour) - 9, Number(minute), 0, 0);

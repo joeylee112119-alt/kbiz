@@ -36,13 +36,12 @@ export type CorrectionPreference = (typeof correctionPreferences)[number];
 export const appStates = [
   "ONBOARDING",
   "TRIAL_READY",
-  "TRIAL_CALL",
+  "TRIAL_LESSON",
   "TRIAL_RESULT",
   "SUBSCRIPTION",
   "HOME",
-  "CALL_SCHEDULED",
-  "CALL_RINGING",
-  "CALL_CONNECTING",
+  "LESSON_SCHEDULED",
+  "LESSON_READY",
   "LESSON_ACTIVE",
   "LESSON_FINISHING",
   "RESULT_GENERATING",
@@ -63,22 +62,28 @@ export const lessonStages = [
 ] as const;
 export type LessonStage = (typeof lessonStages)[number];
 
-export const callAttemptStatuses = [
-  "CREATED",
-  "PUSH_SENT",
-  "RINGING",
-  "ACCEPTED",
-  "CONNECTING",
+export const lessonOccurrenceStatuses = [
+  "SCHEDULED",
+  "NOTIFICATION_PENDING",
+  "NOTIFIED",
+  "READY",
+  "SNOOZED",
+  "STARTING",
   "ACTIVE",
   "COMPLETED",
-  "DECLINED",
-  "SNOOZED",
+  "SKIPPED",
   "MISSED",
-  "FAILED",
   "CANCELLED",
-  "EXPIRED"
+  "EXPIRED",
+  "FAILED"
 ] as const;
-export type CallAttemptStatus = (typeof callAttemptStatuses)[number];
+export type LessonOccurrenceStatus = (typeof lessonOccurrenceStatuses)[number];
+
+export const notificationDeliveryStatuses = ["PENDING", "SENT", "OPENED", "ACTIONED", "FAILED", "EXPIRED"] as const;
+export type NotificationDeliveryStatus = (typeof notificationDeliveryStatuses)[number];
+
+export const notificationTypes = ["LESSON_PRE_REMINDER", "LESSON_REMINDER", "LESSON_SNOOZE_REMINDER", "REPORT_READY"] as const;
+export type NotificationType = (typeof notificationTypes)[number];
 
 export const realtimeConnectionStates = [
   "IDLE",
@@ -106,9 +111,9 @@ export type EntitlementState = (typeof entitlementStates)[number];
 export const errorCodes = [
   "AUTH_REQUIRED",
   "VALIDATION_FAILED",
-  "CALL_ALREADY_ACCEPTED",
-  "CALL_EXPIRED",
-  "CALL_NOT_FOUND",
+  "OCCURRENCE_ALREADY_STARTED",
+  "OCCURRENCE_EXPIRED",
+  "OCCURRENCE_NOT_FOUND",
   "LESSON_NOT_FOUND",
   "REALTIME_SESSION_FAILED",
   "RATE_LIMITED",
@@ -150,24 +155,25 @@ export type Tutor = {
   defaultVoiceId: string;
 };
 
-export type CallScheduleRequest = {
-  weekdays: number[];
+export type LessonScheduleRequest = {
+  daysOfWeek: number[];
   localTime: string;
   timezone: string;
-  lessonDurationMinutes: number;
-  holidayPauseEnabled: boolean;
+  durationMinutes: number;
+  preReminderMinutes?: number | null;
+  enabled?: boolean;
 };
 
-export type CallAttempt = {
+export type LessonOccurrence = {
   id: string;
   scheduleId: string | null;
-  status: CallAttemptStatus;
-  startsAt: string;
+  status: LessonOccurrenceStatus;
+  scheduledAt: string;
+  availableFrom: string;
   expiresAt: string;
   tutorId: string;
+  lessonTemplateId: string;
   topicKo: string;
-  iosCallKitUuid?: string;
-  androidCallId?: string;
 };
 
 export type LessonStageState = {
@@ -237,13 +243,17 @@ export type LessonReport = {
 };
 
 export const websocketEventTypes = [
-  "call.created",
-  "call.ringing",
-  "call.accepted",
-  "call.declined",
-  "call.snoozed",
-  "call.missed",
-  "call.ended",
+  "lesson_schedule.created",
+  "lesson_schedule.updated",
+  "lesson_occurrence.created",
+  "lesson_pre_reminder.sent",
+  "lesson_reminder.sent",
+  "lesson_reminder.opened",
+  "lesson_ready.viewed",
+  "lesson.snoozed",
+  "lesson.skipped",
+  "lesson.missed",
+  "lesson_start.clicked",
   "realtime.connecting",
   "realtime.connected",
   "realtime.reconnecting",

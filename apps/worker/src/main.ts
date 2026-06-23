@@ -1,16 +1,15 @@
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
 import { Queue, Worker, type JobsOptions, type Job } from "bullmq";
 import { Redis } from "ioredis";
 import { PrismaClient } from "@aiphone/database";
 import { assertProductionSafety, loadConfig } from "@aiphone/config";
-import { createPushProvider, type PushProvider } from "@aiphone/notification";
+import { createPushProvider, type NotificationKind, type PushProvider } from "@aiphone/notification";
 
 export const queueNames = [
-  "schedule-call",
-  "send-reminder",
-  "send-incoming-call",
-  "expire-call",
+  "materialize-lesson-occurrences",
+  "send-pre-lesson-reminder",
+  "send-lesson-reminder",
+  "expire-lesson-occurrence",
   "generate-report",
   "generate-review-items",
   "process-outbox"
@@ -85,17 +84,17 @@ async function handleJob(
   log("worker.job.started", { queueName, jobId: job.id, correlation });
 
   switch (queueName) {
-    case "schedule-call":
-      await scheduleCall(job, prisma, queues);
+    case "materialize-lesson-occurrences":
+      await materializeLessonOccurrence(job, prisma, queues);
       break;
-    case "send-reminder":
-      await sendNotification(job, prisma, pushProvider, "REMINDER");
+    case "send-pre-lesson-reminder":
+      await sendNotification(job, prisma, pushProvider, "LESSON_PRE_REMINDER");
       break;
-    case "send-incoming-call":
-      await sendNotification(job, prisma, pushProvider, "INCOMING_CALL");
+    case "send-lesson-reminder":
+      await sendNotification(job, prisma, pushProvider, "LESSON_REMINDER");
       break;
-    case "expire-call":
-      await expireCall(job, prisma);
+    case "expire-lesson-occurrence":
+      await expireLessonOccurrence(job, prisma);
       break;
     case "generate-report":
       await generateReport(job, prisma);
@@ -111,89 +110,137 @@ async function handleJob(
   log("worker.job.completed", { queueName, jobId: job.id, correlation });
 }
 
-async function scheduleCall(job: Job, prisma: PrismaClient, queues: QueueMap): Promise<void> {
+async function materializeLessonOccurrence(job: Job, prisma: PrismaClient, queues: QueueMap): Promise<void> {
   const scheduleId = String(job.data.scheduleId);
-  const schedule = await prisma.callSchedule.findUniqueOrThrow({ where: { id: scheduleId }, include: { user: true } });
-  const tutor = await prisma.tutor.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
-  const startsAt = new Date(String(job.data.startsAt ?? new Date().toISOString()));
-  const idempotencyKey = `schedule-call:${schedule.id}:${startsAt.toISOString()}`;
-  const call = await prisma.callAttempt.upsert({
+  const schedule = await prisma.lessonSchedule.findUniqueOrThrow({ where: { id: scheduleId }, include: { user: true } });
+  const template = await ensureDefaultLessonTemplate(prisma);
+  const scheduledAt = new Date(String(job.data.scheduledAt ?? schedule.nextRunAt.toISOString()));
+  const availableFrom = new Date(scheduledAt.getTime() - (schedule.preReminderMinutes ?? 10) * 60_000);
+  const expiresAt = new Date(scheduledAt.getTime() + schedule.durationMinutes * 60_000 + 15 * 60_000);
+  const idempotencyKey = `lesson-occurrence:${schedule.id}:${scheduledAt.toISOString()}`;
+  const occurrence = await prisma.lessonOccurrence.upsert({
     where: { idempotencyKey },
     update: {},
     create: {
       userId: schedule.userId,
       scheduleId: schedule.id,
-      tutorId: tutor.id,
-      status: "CREATED",
-      startsAt,
-      expiresAt: new Date(startsAt.getTime() + 45_000),
-      iosCallKitUuid: randomUUID(),
-      androidCallId: randomUUID(),
+      tutorId: schedule.tutorId,
+      lessonTemplateId: template.id,
+      status: "SCHEDULED",
+      scheduledAt,
+      availableFrom,
+      expiresAt,
       idempotencyKey
     }
   });
 
-  await queues["send-reminder"].add(
-    "send-reminder",
-    { callAttemptId: call.id },
-    { ...defaultJobOptions, jobId: `send-reminder:${call.id}` }
+  await queues["send-pre-lesson-reminder"].add(
+    "send-pre-lesson-reminder",
+    { occurrenceId: occurrence.id },
+    { ...defaultJobOptions, jobId: `send-pre-lesson-reminder:${occurrence.id}`, delay: Math.max(0, availableFrom.getTime() - Date.now()) }
   );
-  await queues["send-incoming-call"].add(
-    "send-incoming-call",
-    { callAttemptId: call.id },
-    { ...defaultJobOptions, jobId: `send-incoming-call:${call.id}` }
+  await queues["send-lesson-reminder"].add(
+    "send-lesson-reminder",
+    { occurrenceId: occurrence.id },
+    { ...defaultJobOptions, jobId: `send-lesson-reminder:${occurrence.id}`, delay: Math.max(0, scheduledAt.getTime() - Date.now()) }
   );
-  await queues["expire-call"].add(
-    "expire-call",
-    { callAttemptId: call.id },
-    { ...defaultJobOptions, jobId: `expire-call:${call.id}`, delay: 45_000 }
+  await queues["expire-lesson-occurrence"].add(
+    "expire-lesson-occurrence",
+    { occurrenceId: occurrence.id },
+    { ...defaultJobOptions, jobId: `expire-lesson-occurrence:${occurrence.id}`, delay: Math.max(0, expiresAt.getTime() - Date.now()) }
   );
+  await prisma.user.update({ where: { id: schedule.userId }, data: { appState: "LESSON_SCHEDULED" } });
 }
 
-async function sendNotification(job: Job, prisma: PrismaClient, pushProvider: PushProvider, type: "REMINDER" | "INCOMING_CALL"): Promise<void> {
-  const callAttemptId = String(job.data.callAttemptId);
-  const call = await prisma.callAttempt.findUniqueOrThrow({ where: { id: callAttemptId } });
-  const payload = {
-    id: call.id,
-    scheduleId: call.scheduleId,
-    status: call.status,
-    startsAt: call.startsAt.toISOString(),
-    expiresAt: call.expiresAt.toISOString(),
-    tutorId: call.tutorId,
-    topicKo: "호텔 체크인",
-    ...(call.iosCallKitUuid ? { iosCallKitUuid: call.iosCallKitUuid } : {}),
-    ...(call.androidCallId ? { androidCallId: call.androidCallId } : {})
-  };
-  const result = type === "REMINDER" ? await pushProvider.sendReminder(payload) : await pushProvider.sendIncomingCall(payload);
-  const existingLog = await prisma.notificationLog.findFirst({ where: { callAttemptId, type } });
-  if (existingLog) {
-    await prisma.notificationLog.update({
-      where: { id: existingLog.id },
-      data: { status: "SENT", externalId: result.externalId, provider: result.provider }
-    });
-  } else {
-    await prisma.notificationLog.create({
+async function sendNotification(
+  job: Job,
+  prisma: PrismaClient,
+  pushProvider: PushProvider,
+  notificationType: NotificationKind
+): Promise<void> {
+  const occurrenceId = String(job.data.occurrenceId);
+  const occurrence = await prisma.lessonOccurrence.findUniqueOrThrow({
+    where: { id: occurrenceId },
+    include: {
+      lessonTemplate: true,
+      tutor: true,
+      user: { include: { devices: { include: { pushTokens: true } } } }
+    }
+  });
+  const token = occurrence.user.devices
+    .flatMap((device) => device.pushTokens.map((pushToken) => ({ ...pushToken, deviceId: device.id })))
+    .find((pushToken) => !pushToken.revokedAt && pushToken.tokenValue);
+  const delivery = await prisma.notificationDelivery.upsert({
+    where: { idempotencyKey: `notification:${notificationType}:${occurrence.id}` },
+    update: { status: "PENDING" },
+    create: {
+      occurrenceId: occurrence.id,
+      deviceId: token?.deviceId ?? null,
+      pushTokenId: token?.id ?? null,
+      notificationType,
+      provider: "pending",
+      status: "PENDING",
+      scheduledFor: notificationType === "LESSON_PRE_REMINDER" ? occurrence.availableFrom : occurrence.scheduledAt,
+      idempotencyKey: `notification:${notificationType}:${occurrence.id}`
+    }
+  });
+
+  await prisma.lessonOccurrence.updateMany({
+    where: { id: occurrence.id, status: "SCHEDULED" },
+    data: { status: "NOTIFICATION_PENDING" }
+  });
+
+  try {
+    const payload = {
+      occurrenceId: occurrence.id,
+      notificationDeliveryId: delivery.id,
+      notificationType,
+      token: token?.tokenValue ?? null,
+      title: notificationType === "LESSON_PRE_REMINDER" ? "수업 10분 전이에요" : "AI 영어 수업을 시작할 시간이에요",
+      body: `${occurrence.tutor.name}와 ${occurrence.lessonTemplate.titleKo} 연습을 준비했어요.`,
+      data: { scheduledAt: occurrence.scheduledAt.toISOString() }
+    };
+    const result = notificationType === "LESSON_PRE_REMINDER"
+      ? await pushProvider.sendPreLessonReminder(payload)
+      : await pushProvider.sendLessonReminder(payload);
+    await prisma.notificationDelivery.update({
+      where: { id: delivery.id },
       data: {
-        callAttemptId,
         provider: result.provider,
-        type,
-        status: "SENT",
-        externalId: result.externalId
+        providerMessageId: result.externalId,
+        status: result.skipped ? "FAILED" : "SENT",
+        sentAt: new Date(result.sentAt),
+        failedAt: result.skipped ? new Date() : null,
+        failureCode: result.skipped ? result.reason ?? "SKIPPED" : null
       }
     });
-  }
-  if (type === "INCOMING_CALL") {
-    await prisma.callAttempt.update({ where: { id: callAttemptId }, data: { status: "RINGING" } });
-  } else {
-    await prisma.callAttempt.updateMany({ where: { id: callAttemptId, status: "CREATED" }, data: { status: "PUSH_SENT" } });
+    if (!result.skipped) {
+      await prisma.lessonOccurrence.update({ where: { id: occurrence.id }, data: { status: "NOTIFIED" } });
+    }
+  } catch (error) {
+    await prisma.notificationDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        provider: "firebase",
+        status: "FAILED",
+        failedAt: new Date(),
+        failureCode: "PUSH_SEND_FAILED",
+        failureMessage: error instanceof Error ? error.message : String(error)
+      }
+    });
+    throw error;
   }
 }
 
-async function expireCall(job: Job, prisma: PrismaClient): Promise<void> {
-  const callAttemptId = String(job.data.callAttemptId);
-  await prisma.callAttempt.updateMany({
-    where: { id: callAttemptId, status: { in: ["CREATED", "PUSH_SENT", "RINGING"] } },
-    data: { status: "EXPIRED", endedAt: new Date() }
+async function expireLessonOccurrence(job: Job, prisma: PrismaClient): Promise<void> {
+  const occurrenceId = String(job.data.occurrenceId);
+  await prisma.lessonOccurrence.updateMany({
+    where: { id: occurrenceId, status: { in: ["SCHEDULED", "NOTIFICATION_PENDING", "NOTIFIED", "READY", "SNOOZED"] } },
+    data: { status: "EXPIRED" }
+  });
+  await prisma.notificationDelivery.updateMany({
+    where: { occurrenceId, status: { in: ["PENDING", "SENT"] } },
+    data: { status: "EXPIRED" }
   });
 }
 
@@ -215,7 +262,13 @@ async function generateReport(job: Job, prisma: PrismaClient): Promise<void> {
         vocabularyScore: 80,
         pronunciationScore: null,
         userSpeakingRatio: 0.5,
-        reviewItems: ["Could I get a quiet room?"]
+        targetExpressions: [],
+        goodExpressions: [],
+        corrections: [],
+        newVocabulary: [],
+        reviewItems: ["Could I get a quiet room?"],
+        nextLessonRecommendation: { lessonTemplateSlug: "hotel-checkin-a1", reasonKo: "다음 여행 상황으로 확장합니다." },
+        confidence: { transcriptCoverage: 0.5 }
       }
     }
   });
@@ -245,6 +298,36 @@ async function processOutbox(prisma: PrismaClient): Promise<void> {
   }
 }
 
+async function ensureDefaultLessonTemplate(prisma: PrismaClient): Promise<{ id: string }> {
+  const existing = await prisma.lessonTemplate.findFirst({
+    where: { status: "PUBLISHED" },
+    orderBy: { createdAt: "asc" },
+    select: { id: true }
+  });
+  if (existing) return existing;
+  return prisma.lessonTemplate.upsert({
+    where: { slug: "hotel-checkin-a1" },
+    update: { status: "PUBLISHED" },
+    create: {
+      slug: "hotel-checkin-a1",
+      titleKo: "호텔 체크인",
+      titleEn: "Hotel check-in",
+      level: "A1",
+      category: "travel",
+      status: "PUBLISHED",
+      versions: {
+        create: {
+          version: 1,
+          objective: "호텔 체크인 상황에서 예약 확인과 요청 표현을 연습합니다.",
+          estimatedDuration: 900,
+          status: "PUBLISHED"
+        }
+      }
+    },
+    select: { id: true }
+  });
+}
+
 async function recordFailedJob(prisma: PrismaClient, job: Job | undefined, error: Error): Promise<void> {
   if (!job) return;
   await prisma.outboxEvent.upsert({
@@ -264,7 +347,7 @@ async function recordFailedJob(prisma: PrismaClient, job: Job | undefined, error
 
 function getCorrelation(job: Job): Record<string, unknown> {
   return {
-    callAttemptId: job.data.callAttemptId,
+    occurrenceId: job.data.occurrenceId,
     lessonSessionId: job.data.lessonSessionId,
     scheduleId: job.data.scheduleId
   };
