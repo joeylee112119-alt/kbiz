@@ -3,12 +3,9 @@
 Production iOS requires:
 
 - Apple Developer Program membership.
-- Bundle ID with Push Notifications, VoIP, Background Modes, and associated capabilities.
+- Bundle ID with Push Notifications.
 - APNs key or certificate.
-- PushKit entitlement review where applicable.
-- CallKit usage descriptions.
 - Microphone usage string.
-- Background audio mode.
-- Physical device QA for locked screen, background, foreground, force quit, Bluetooth, and competing phone calls.
+- Physical device QA for locked screen, background, foreground, force quit, delayed push, and Bluetooth audio during an active foreground lesson.
 
-The Swift module currently exposes the required event bridge and mock token behavior.
+The Swift module uses `UserNotifications`, APNs token registration, local debug lesson reminders, notification-open events, and a React Native bridge. It intentionally does not use PushKit, CallKit, VoIP pushes, or `reportNewIncomingCall`.

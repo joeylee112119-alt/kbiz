@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from "react";
 import { SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
-import { appStates, type AppState } from "@aiphone/contracts";
+import type { AppState } from "@aiphone/contracts";
 import { BackchannelController, InterruptionClassifier } from "@aiphone/lesson-engine";
 import { buildRealtimeSessionUpdate, RealtimeStateMachine } from "@aiphone/realtime-client";
 import { colors, styles } from "./design-system";
+import { presentDebugLessonReminder, registerNativePushToken } from "./native/NativeNotificationBridge";
 
 const onboardingSteps = [
   "시작",
@@ -17,23 +18,24 @@ const onboardingSteps = [
   "관심사",
   "하루 학습 시간",
   "요일",
-  "전화 시간",
+  "수업 알림 시간",
   "알림 권한",
   "마이크 권한",
   "녹음·전사 동의",
   "학습 계획 생성",
-  "무료 체험 전화",
+  "무료 체험 수업",
   "체험 결과",
   "구독"
 ];
 
 export default function App() {
   const [state, setState] = useState<AppState>("ONBOARDING");
-  const [step, setStep] = useState(0);
+  const [step] = useState(0);
   const realtime = useMemo(() => new RealtimeStateMachine(), []);
   const classifier = useMemo(() => new InterruptionClassifier(), []);
   const backchannel = useMemo(() => new BackchannelController(), []);
   const realtimeDefaults = buildRealtimeSessionUpdate("gpt-realtime-2", "marin");
+  const [nativeStatus, setNativeStatus] = useState("알림 토큰 미등록");
 
   const interruption = classifier.classify({
     transcript: "yeah",
@@ -56,36 +58,59 @@ export default function App() {
     randomValue: 0.8
   });
 
-  function advance() {
-    if (state === "ONBOARDING" && step < onboardingSteps.length - 1) {
-      setStep(step + 1);
-      return;
+  async function registerPush() {
+    try {
+      const result = await registerNativePushToken();
+      setNativeStatus(`알림 등록 요청 완료: ${typeof result === "string" ? result.slice(-4) : "requested"}`);
+    } catch (error) {
+      setNativeStatus(error instanceof Error ? error.message : "알림 등록 실패");
     }
-    const currentIndex = appStates.indexOf(state);
-    setState(appStates[Math.min(currentIndex + 1, appStates.length - 1)] ?? "HOME");
+  }
+
+  async function showDebugReminder() {
+    try {
+      await presentDebugLessonReminder({
+        occurrenceId: "debug-occurrence",
+        notificationDeliveryId: "debug-delivery",
+        title: "AI 영어 수업을 시작할 시간이에요",
+        body: "Emma와 호텔 체크인 연습을 준비했어요."
+      });
+      setState("LESSON_READY");
+      setNativeStatus("디버그 수업 알림 표시됨");
+    } catch (error) {
+      setNativeStatus(error instanceof Error ? error.message : "디버그 알림 실패");
+    }
   }
 
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.eyebrow}>AI 전화영어</Text>
+          <Text style={styles.eyebrow}>AI 영어 수업</Text>
           <Text style={styles.title}>{state === "ONBOARDING" ? onboardingSteps[step] : screenTitle(state)}</Text>
           <Text style={styles.subtitle}>오늘 오후 8:30 · Emma 선생님 · 호텔 체크인 · 15분</Text>
         </View>
 
         <View style={styles.panel}>
-          <Text style={styles.sectionTitle}>다음 영어 전화</Text>
-          <Text style={styles.large}>영어 전화가 왔어요</Text>
-          <Text style={styles.body}>핵심 표현만 보면서 직접 말하는 수업 화면입니다. 전체 스크립트는 미리 보여주지 않습니다.</Text>
+          <Text style={styles.sectionTitle}>다음 예약 수업</Text>
+          <Text style={styles.large}>{state === "LESSON_READY" ? "수업 준비가 끝났어요" : "알림을 받으면 준비 화면으로 이동해요"}</Text>
+          <Text style={styles.body}>알림 탭은 준비 화면만 엽니다. 마이크와 OpenAI Realtime 연결은 사용자가 수업 시작을 누른 뒤에만 시작됩니다.</Text>
           <View style={styles.row}>
-            <TouchableOpacity style={[styles.button, { backgroundColor: colors.accent }]} onPress={advance} accessibilityRole="button">
-              <Text style={styles.buttonText}>{state === "CALL_RINGING" ? "받기" : "다음"}</Text>
+            <TouchableOpacity style={[styles.button, { backgroundColor: colors.accent }]} onPress={() => setState(state === "LESSON_READY" ? "LESSON_ACTIVE" : "LESSON_READY")} accessibilityRole="button">
+              <Text style={styles.buttonText}>{state === "LESSON_READY" ? "수업 시작" : "준비 화면"}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={() => setState("CALL_RINGING")} accessibilityRole="button">
-              <Text style={styles.secondaryButtonText}>Mock 전화</Text>
+            <TouchableOpacity style={styles.secondaryButton} onPress={showDebugReminder} accessibilityRole="button">
+              <Text style={styles.secondaryButtonText}>Mock 알림</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.panel}>
+          <Text style={styles.sectionTitle}>푸시 알림</Text>
+          <Text style={styles.body}>{nativeStatus}</Text>
+          <TouchableOpacity style={styles.secondaryButton} onPress={registerPush} accessibilityRole="button">
+            <Text style={styles.secondaryButtonText}>알림 토큰 등록</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.panel}>
@@ -110,13 +135,12 @@ function screenTitle(state: AppState): string {
   const labels: Record<AppState, string> = {
     ONBOARDING: "온보딩",
     TRIAL_READY: "무료 체험 준비",
-    TRIAL_CALL: "체험 전화",
+    TRIAL_LESSON: "체험 수업",
     TRIAL_RESULT: "체험 결과",
     SUBSCRIPTION: "구독",
     HOME: "홈",
-    CALL_SCHEDULED: "전화 예약됨",
-    CALL_RINGING: "수신 전화",
-    CALL_CONNECTING: "연결 중",
+    LESSON_SCHEDULED: "수업 예약됨",
+    LESSON_READY: "수업 준비",
     LESSON_ACTIVE: "수업 중",
     LESSON_FINISHING: "수업 정리",
     RESULT_GENERATING: "결과 생성",

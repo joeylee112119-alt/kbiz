@@ -15,7 +15,7 @@ class MainApplication : Application(), ReactApplication {
     object : DefaultReactNativeHost(this) {
       override fun getPackages(): List<ReactPackage> =
         PackageList(this).packages.apply {
-          add(NativeCallPackage())
+          add(NotificationPackage())
         }
 
       override fun getJSMainModuleName(): String = "index"
@@ -32,6 +32,6 @@ class MainApplication : Application(), ReactApplication {
     if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
       load()
     }
-    IncomingCallService.ensureChannel(this)
+    LessonReminderNotification.ensureChannel(this)
   }
 }

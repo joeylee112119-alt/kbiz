@@ -151,7 +151,7 @@ export default function AdminDashboard() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">Call English Ops</div>
+        <div className="brand">Lesson Reminder Ops</div>
         <nav className="nav" aria-label="Admin">
           <a href="#content">LessonTemplate</a>
           <a href="#stages">Stage</a>

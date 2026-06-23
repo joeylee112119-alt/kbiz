@@ -50,7 +50,6 @@ android {
 dependencies {
   implementation "com.facebook.react:react-android"
   implementation "androidx.core:core-ktx:1.15.0"
-  implementation "androidx.core:core-telecom:1.0.0"
   implementation "androidx.core:core:1.15.0"
   implementation "com.google.firebase:firebase-messaging-ktx:24.1.0"
 }
