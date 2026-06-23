@@ -11,6 +11,20 @@
     android:label="AI 전화영어"
     android:theme="@style/AppTheme"
     android:usesCleartextTraffic="true">
+    <service
+      android:name=".IncomingCallMessagingService"
+      android:exported="false">
+      <intent-filter>
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
+    <service
+      android:name=".IncomingCallService"
+      android:exported="false"
+      android:foregroundServiceType="microphone" />
+    <receiver
+      android:name=".NativeCallActionReceiver"
+      android:exported="false" />
     <activity
       android:name=".MainActivity"
       android:exported="true">

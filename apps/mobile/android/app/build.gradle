@@ -1,11 +1,16 @@
 plugins {
   id "com.android.application"
   id "org.jetbrains.kotlin.android"
+  id "com.facebook.react"
 }
 
 android {
   namespace "com.aiphoneenglish"
   compileSdk 35
+
+  buildFeatures {
+    buildConfig true
+  }
 
   defaultConfig {
     applicationId "com.aiphoneenglish"
@@ -13,5 +18,39 @@ android {
     targetSdk 35
     versionCode 1
     versionName "0.1.0"
+    buildConfigField "boolean", "IS_NEW_ARCHITECTURE_ENABLED", "false"
+    buildConfigField "boolean", "IS_HERMES_ENABLED", "true"
   }
+
+  flavorDimensions += "environment"
+  productFlavors {
+    mock {
+      dimension "environment"
+      applicationIdSuffix ".mock"
+      versionNameSuffix "-mock"
+      buildConfigField "String", "PUSH_MODE", "\"mock\""
+    }
+    production {
+      dimension "environment"
+      buildConfigField "String", "PUSH_MODE", "\"production\""
+    }
+  }
+
+  buildTypes {
+    debug {
+      matchingFallbacks = ["debug"]
+    }
+    release {
+      minifyEnabled false
+      proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+    }
+  }
+}
+
+dependencies {
+  implementation "com.facebook.react:react-android"
+  implementation "androidx.core:core-ktx:1.15.0"
+  implementation "androidx.core:core-telecom:1.0.0"
+  implementation "androidx.core:core:1.15.0"
+  implementation "com.google.firebase:firebase-messaging-ktx:24.1.0"
 }

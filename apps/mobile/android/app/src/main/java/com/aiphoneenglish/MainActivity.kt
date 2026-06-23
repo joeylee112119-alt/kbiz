@@ -1,5 +1,13 @@
 package com.aiphoneenglish
 
-import android.app.Activity
+import com.facebook.react.ReactActivity
+import com.facebook.react.ReactActivityDelegate
+import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
+import com.facebook.react.defaults.DefaultReactActivityDelegate
 
-class MainActivity : Activity()
+class MainActivity : ReactActivity() {
+  override fun getMainComponentName(): String = "AIPhoneEnglish"
+
+  override fun createReactActivityDelegate(): ReactActivityDelegate =
+    DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
+}

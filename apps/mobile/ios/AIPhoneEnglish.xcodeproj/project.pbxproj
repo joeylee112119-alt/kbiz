@@ -1,0 +1,113 @@
+// !$*UTF8*$!
+{
+  archiveVersion = 1;
+  classes = {};
+  objectVersion = 56;
+  objects = {
+    APP_TARGET = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = APP_CONFIGS;
+      buildPhases = (SOURCES_PHASE, FRAMEWORKS_PHASE, RESOURCES_PHASE);
+      buildRules = ();
+      dependencies = ();
+      name = AIPhoneEnglish;
+      productName = AIPhoneEnglish;
+      productReference = APP_PRODUCT;
+      productType = "com.apple.product-type.application";
+    };
+    TEST_TARGET = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = TEST_CONFIGS;
+      buildPhases = (TEST_SOURCES_PHASE, FRAMEWORKS_PHASE);
+      buildRules = ();
+      dependencies = ();
+      name = AIPhoneEnglishTests;
+      productName = AIPhoneEnglishTests;
+      productReference = TEST_PRODUCT;
+      productType = "com.apple.product-type.bundle.unit-test";
+    };
+    PROJECT = {
+      isa = PBXProject;
+      attributes = {
+        LastSwiftUpdateCheck = 1600;
+        LastUpgradeCheck = 1600;
+        TargetAttributes = {
+          APP_TARGET = { CreatedOnToolsVersion = 16.0; };
+          TEST_TARGET = { CreatedOnToolsVersion = 16.0; };
+        };
+      };
+      buildConfigurationList = PROJECT_CONFIGS;
+      compatibilityVersion = "Xcode 14.0";
+      developmentRegion = en;
+      hasScannedForEncodings = 0;
+      knownRegions = (en, Base);
+      mainGroup = MAIN_GROUP;
+      productRefGroup = PRODUCTS_GROUP;
+      projectDirPath = "";
+      projectRoot = "";
+      targets = (APP_TARGET, TEST_TARGET);
+    };
+    MAIN_GROUP = {
+      isa = PBXGroup;
+      children = (APP_GROUP, TEST_GROUP, PRODUCTS_GROUP);
+      sourceTree = "<group>";
+    };
+    APP_GROUP = {
+      isa = PBXGroup;
+      children = (APP_DELEGATE_FILE, NATIVE_CALL_FILE, NATIVE_CALL_BRIDGE_FILE, INFO_PLIST_FILE, ENTITLEMENTS_FILE);
+      path = AIPhoneEnglish;
+      sourceTree = "<group>";
+    };
+    TEST_GROUP = {
+      isa = PBXGroup;
+      children = (NATIVE_CALL_TEST_FILE);
+      path = AIPhoneEnglishTests;
+      sourceTree = "<group>";
+    };
+    PRODUCTS_GROUP = {
+      isa = PBXGroup;
+      children = (APP_PRODUCT, TEST_PRODUCT);
+      name = Products;
+      sourceTree = "<group>";
+    };
+    APP_DELEGATE_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+    NATIVE_CALL_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCallModule.swift; sourceTree = "<group>"; };
+    NATIVE_CALL_BRIDGE_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = NativeCallModuleBridge.m; sourceTree = "<group>"; };
+    INFO_PLIST_FILE = { isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+    ENTITLEMENTS_FILE = { isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AIPhoneEnglish.entitlements; sourceTree = "<group>"; };
+    NATIVE_CALL_TEST_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCallModuleTests.swift; sourceTree = "<group>"; };
+    APP_PRODUCT = { isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AIPhoneEnglish.app; sourceTree = BUILT_PRODUCTS_DIR; };
+    TEST_PRODUCT = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AIPhoneEnglishTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+    APP_DELEGATE_BUILD = { isa = PBXBuildFile; fileRef = APP_DELEGATE_FILE; };
+    NATIVE_CALL_BUILD = { isa = PBXBuildFile; fileRef = NATIVE_CALL_FILE; };
+    NATIVE_CALL_BRIDGE_BUILD = { isa = PBXBuildFile; fileRef = NATIVE_CALL_BRIDGE_FILE; };
+    NATIVE_CALL_TEST_BUILD = { isa = PBXBuildFile; fileRef = NATIVE_CALL_TEST_FILE; };
+    SOURCES_PHASE = {
+      isa = PBXSourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (APP_DELEGATE_BUILD, NATIVE_CALL_BUILD, NATIVE_CALL_BRIDGE_BUILD);
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    TEST_SOURCES_PHASE = {
+      isa = PBXSourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (NATIVE_CALL_TEST_BUILD);
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    FRAMEWORKS_PHASE = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    RESOURCES_PHASE = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+    PROJECT_CONFIGS = { isa = XCConfigurationList; buildConfigurations = (PROJECT_DEBUG_MOCK, PROJECT_DEBUG_PROD, PROJECT_RELEASE); defaultConfigurationIsVisible = 0; defaultConfigurationName = DebugMock; };
+    APP_CONFIGS = { isa = XCConfigurationList; buildConfigurations = (APP_DEBUG_MOCK, APP_DEBUG_PROD, APP_RELEASE); defaultConfigurationIsVisible = 0; defaultConfigurationName = DebugMock; };
+    TEST_CONFIGS = { isa = XCConfigurationList; buildConfigurations = (TEST_DEBUG_MOCK, TEST_DEBUG_PROD, TEST_RELEASE); defaultConfigurationIsVisible = 0; defaultConfigurationName = DebugMock; };
+    PROJECT_DEBUG_MOCK = { isa = XCBuildConfiguration; name = DebugMock; buildSettings = { SWIFT_VERSION = 5.0; IPHONEOS_DEPLOYMENT_TARGET = 15.1; }; };
+    PROJECT_DEBUG_PROD = { isa = XCBuildConfiguration; name = DebugProduction; buildSettings = { SWIFT_VERSION = 5.0; IPHONEOS_DEPLOYMENT_TARGET = 15.1; }; };
+    PROJECT_RELEASE = { isa = XCBuildConfiguration; name = Release; buildSettings = { SWIFT_VERSION = 5.0; IPHONEOS_DEPLOYMENT_TARGET = 15.1; }; };
+    APP_DEBUG_MOCK = { isa = XCBuildConfiguration; name = DebugMock; buildSettings = { PRODUCT_BUNDLE_IDENTIFIER = com.aiphoneenglish.mock; PRODUCT_NAME = AIPhoneEnglish; INFOPLIST_FILE = AIPhoneEnglish/Info.plist; CODE_SIGN_ENTITLEMENTS = AIPhoneEnglish/AIPhoneEnglish.entitlements; CODE_SIGN_STYLE = Automatic; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG MOCK"; }; };
+    APP_DEBUG_PROD = { isa = XCBuildConfiguration; name = DebugProduction; buildSettings = { PRODUCT_BUNDLE_IDENTIFIER = com.aiphoneenglish; PRODUCT_NAME = AIPhoneEnglish; INFOPLIST_FILE = AIPhoneEnglish/Info.plist; CODE_SIGN_ENTITLEMENTS = AIPhoneEnglish/AIPhoneEnglish.entitlements; CODE_SIGN_STYLE = Automatic; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG PRODUCTION"; }; };
+    APP_RELEASE = { isa = XCBuildConfiguration; name = Release; buildSettings = { PRODUCT_BUNDLE_IDENTIFIER = com.aiphoneenglish; PRODUCT_NAME = AIPhoneEnglish; INFOPLIST_FILE = AIPhoneEnglish/Info.plist; CODE_SIGN_ENTITLEMENTS = AIPhoneEnglish/AIPhoneEnglish.entitlements; CODE_SIGN_STYLE = Automatic; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "PRODUCTION"; }; };
+    TEST_DEBUG_MOCK = { isa = XCBuildConfiguration; name = DebugMock; buildSettings = { PRODUCT_BUNDLE_IDENTIFIER = com.aiphoneenglish.tests; PRODUCT_NAME = AIPhoneEnglishTests; }; };
+    TEST_DEBUG_PROD = { isa = XCBuildConfiguration; name = DebugProduction; buildSettings = { PRODUCT_BUNDLE_IDENTIFIER = com.aiphoneenglish.tests; PRODUCT_NAME = AIPhoneEnglishTests; }; };
+    TEST_RELEASE = { isa = XCBuildConfiguration; name = Release; buildSettings = { PRODUCT_BUNDLE_IDENTIFIER = com.aiphoneenglish.tests; PRODUCT_NAME = AIPhoneEnglishTests; }; };
+  };
+  rootObject = PROJECT;
+}
