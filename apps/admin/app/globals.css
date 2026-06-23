@@ -35,6 +35,31 @@ textarea {
   font: inherit;
 }
 
+button {
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  min-height: 36px;
+  padding: 8px 12px;
+}
+
+input,
+select,
+textarea {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-height: 36px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
 .shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
@@ -81,22 +106,44 @@ textarea {
   margin-bottom: 24px;
 }
 
+.topActions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
 .topbar h1 {
   font-size: 24px;
   margin: 0;
 }
 
-.grid {
+.grid,
+.workbench {
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.card {
+.card,
+.panel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 16px;
+}
+
+.panel {
+  display: grid;
+  gap: 10px;
+}
+
+.panel h1,
+.panel h2 {
+  margin: 0 0 4px;
+}
+
+.panel h2 {
+  font-size: 17px;
 }
 
 .metric {
@@ -113,6 +160,27 @@ textarea {
 
 .wide {
   grid-column: span 2;
+}
+
+.login {
+  align-items: center;
+  display: grid;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.loginPanel {
+  margin: 0 auto;
+  max-width: 380px;
+  width: 100%;
+}
+
+.notice {
+  background: #fff8e1;
+  border: 1px solid #eed07c;
+  border-radius: 6px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
 }
 
 .table {
@@ -145,7 +213,8 @@ textarea {
     position: static;
   }
 
-  .grid {
+  .grid,
+  .workbench {
     grid-template-columns: 1fr;
   }
 

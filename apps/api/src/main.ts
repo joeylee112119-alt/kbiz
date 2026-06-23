@@ -12,7 +12,7 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.setGlobalPrefix("v1");
   app.use(helmet());
-  app.enableCors({ origin: [/^http:\/\/localhost:\d+$/], credentials: true });
+  app.enableCors({ origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/], credentials: true });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
   const config = new DocumentBuilder()

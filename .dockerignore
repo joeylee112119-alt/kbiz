@@ -5,5 +5,7 @@ node_modules
 **/.turbo
 **/.next
 **/dist
+**/.gradle
+**/build
 coverage
 .DS_Store

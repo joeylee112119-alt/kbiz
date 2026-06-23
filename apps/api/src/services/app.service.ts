@@ -506,11 +506,124 @@ export class AppService {
         titleEn: String(body.titleEn ?? "New lesson"),
         level: (body.level as "A1" | "A2" | "B1" | "B2") ?? "A1",
         category: String(body.category ?? "general"),
-        status: "DRAFT"
+        status: "DRAFT",
+        versions: {
+          create: {
+            version: 1,
+            objective: String(body.objective ?? "새 수업 목표"),
+            estimatedDuration: Number(body.estimatedDuration ?? 900),
+            status: "DRAFT"
+          }
+        }
       }
     });
+    const version = await this.prisma.lessonTemplateVersion.findFirstOrThrow({
+      where: { lessonTemplateId: template.id, version: 1 }
+    });
     await this.audit("lesson_template.create", "LessonTemplate", template.id, null, template);
-    return template;
+    return { ...template, activeVersionId: version.id };
+  }
+
+  async createStage(lessonTemplateVersionId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const stage = await this.prisma.lessonStageTemplate.create({
+      data: {
+        lessonTemplateVersionId,
+        stageType: (body.stageType as LessonStage) ?? "WARM_UP",
+        sequence: Number(body.sequence ?? 1),
+        plannedDurationSeconds: Number(body.plannedDurationSeconds ?? 60),
+        objective: String(body.objective ?? "Stage objective"),
+        entryCondition: String(body.entryCondition ?? "Previous stage completed."),
+        exitCondition: String(body.exitCondition ?? "Objective completed."),
+        promptInstruction: String(body.promptInstruction ?? "Guide the learner through this stage."),
+        backchannelEnabled: Boolean(body.backchannelEnabled ?? true),
+        correctionPolicy: String(body.correctionPolicy ?? "IMMEDIATE_IMPORTANT_ONLY")
+      }
+    });
+    await this.audit("stage.create", "LessonStageTemplate", stage.id, null, stage);
+    return stage;
+  }
+
+  async createMaterialCard(lessonTemplateVersionId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const card = await this.prisma.materialCard.create({
+      data: {
+        lessonTemplateVersionId,
+        type: String(body.type ?? "SITUATION"),
+        title: String(body.title ?? "Material"),
+        body: String(body.body ?? "Material body"),
+        sequence: Number(body.sequence ?? 1),
+        targetExpressionIds: Array.isArray(body.targetExpressionIds) ? (body.targetExpressionIds as string[]) : [],
+        hints: Array.isArray(body.hints) ? (body.hints as string[]) : []
+      }
+    });
+    await this.audit("material_card.create", "MaterialCard", card.id, null, card);
+    return card;
+  }
+
+  async createPromptVersion(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const templateName = String(body.templateName ?? "admin-created");
+    const template = await this.prisma.promptTemplate.upsert({
+      where: { name: templateName },
+      update: {},
+      create: { name: templateName, description: String(body.description ?? "Admin prompt template") }
+    });
+    const latest = await this.prisma.promptVersion.findFirst({
+      where: { promptTemplateId: template.id },
+      orderBy: { version: "desc" }
+    });
+    const prompt = await this.prisma.promptVersion.create({
+      data: {
+        promptTemplateId: template.id,
+        version: (latest?.version ?? 0) + 1,
+        body: String(body.body ?? "You are a concise English tutor."),
+        isActive: false
+      }
+    });
+    await this.audit("prompt_version.create", "PromptVersion", prompt.id, null, prompt);
+    return prompt;
+  }
+
+  async activatePromptVersion(id: string): Promise<Record<string, unknown>> {
+    const prompt = await this.prisma.promptVersion.findUniqueOrThrow({ where: { id } });
+    await this.prisma.promptVersion.updateMany({
+      where: { promptTemplateId: prompt.promptTemplateId },
+      data: { isActive: false }
+    });
+    const activated = await this.prisma.promptVersion.update({ where: { id }, data: { isActive: true } });
+    await this.audit("prompt_version.activate", "PromptVersion", id, prompt, activated);
+    return activated;
+  }
+
+  async createBackchannelClip(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const tutor = await this.ensureTutor();
+    const clip = await this.prisma.backchannelClip.create({
+      data: {
+        tutorId: String(body.tutorId ?? tutor.id),
+        clipKey: String(body.clipKey ?? `clip-${randomUUID()}`),
+        label: String(body.label ?? "new clip"),
+        audioUrl: String(body.audioUrl ?? "/assets/backchannel/admin.mp3"),
+        durationMs: Number(body.durationMs ?? 420),
+        weight: Number(body.weight ?? 10)
+      }
+    });
+    await this.audit("backchannel_clip.create", "BackchannelClip", clip.id, null, clip);
+    return clip;
+  }
+
+  async listLessonSessions(): Promise<Array<Record<string, unknown>>> {
+    const sessions = await this.prisma.lessonSession.findMany({
+      include: { transcriptSegments: true, callAttempt: true },
+      orderBy: { createdAt: "desc" },
+      take: 50
+    });
+    return sessions.map((session) => ({
+      id: session.id,
+      userId: session.userId,
+      callAttemptId: session.callAttemptId,
+      state: session.state,
+      transcriptCount: session.transcriptSegments.length,
+      callStatus: session.callAttempt?.status ?? null,
+      createdAt: session.createdAt.toISOString()
+    }));
   }
 
   async listPromptVersions(): Promise<Array<Record<string, unknown>>> {

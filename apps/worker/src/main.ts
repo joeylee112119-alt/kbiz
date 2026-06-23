@@ -271,7 +271,7 @@ function getCorrelation(job: Job): Record<string, unknown> {
 }
 
 function log(event: string, fields: Record<string, unknown>): void {
-  console.log(JSON.stringify({ event, ts: new Date().toISOString(), ...fields }));
+  process.stdout.write(`${JSON.stringify({ event, ts: new Date().toISOString(), ...fields })}\n`);
 }
 
 if (process.env.NODE_ENV !== "test") {
