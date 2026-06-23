@@ -16,6 +16,7 @@
     "test": "turbo run test",
     "smoke": "tsx scripts/smoke.ts",
     "smoke:realtime:production": "tsx scripts/realtime-production-smoke.ts",
+    "smoke:pronunciation:azure": "tsx scripts/azure-pronunciation-smoke.ts",
     "check:architecture": "node scripts/check-architecture.mjs",
     "db:generate": "pnpm --filter @aiphone/database prisma generate",
     "db:migrate": "pnpm --filter @aiphone/database prisma migrate dev",
