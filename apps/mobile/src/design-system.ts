@@ -114,6 +114,25 @@ export const styles = StyleSheet.create({
     padding: spacing.lg,
     paddingBottom: 112
   },
+  productHeader: {
+    gap: spacing.sm
+  },
+  productKicker: {
+    color: colors.blue,
+    fontSize: 15,
+    fontWeight: "900"
+  },
+  productTitle: {
+    color: colors.ink,
+    fontSize: 34,
+    fontWeight: "900",
+    lineHeight: 42
+  },
+  productBody: {
+    color: colors.muted,
+    fontSize: 16,
+    lineHeight: 24
+  },
   metricRow: {
     flexDirection: "row",
     gap: spacing.sm
@@ -122,7 +141,7 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#fff2df",
     borderRadius: 24,
-    flexDirection: "row",
+    flex: 1,
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
@@ -223,6 +242,106 @@ export const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 16,
     fontWeight: "900"
+  },
+  moduleSection: {
+    gap: spacing.md
+  },
+  sectionHeaderRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between"
+  },
+  sectionTitleDark: {
+    color: colors.ink,
+    fontSize: 24,
+    fontWeight: "900"
+  },
+  sectionLink: {
+    color: colors.blue,
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  moduleCard: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderRadius: 24,
+    flexDirection: "row",
+    gap: spacing.md,
+    minHeight: 112,
+    padding: spacing.md,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 18
+  },
+  moduleIcon: {
+    alignItems: "center",
+    backgroundColor: colors.blueSoft,
+    borderRadius: 22,
+    height: 68,
+    justifyContent: "center",
+    width: 68
+  },
+  moduleIconText: {
+    color: colors.blueDark,
+    fontSize: 28,
+    fontWeight: "900"
+  },
+  moduleCopy: {
+    flex: 1,
+    gap: spacing.xs
+  },
+  moduleEyebrow: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  moduleTitle: {
+    color: colors.ink,
+    fontSize: 21,
+    fontWeight: "900"
+  },
+  moduleBody: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 20
+  },
+  feedbackCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 24,
+    gap: spacing.md,
+    padding: spacing.lg
+  },
+  feedbackTitle: {
+    color: colors.ink,
+    fontSize: 26,
+    fontWeight: "900",
+    lineHeight: 34
+  },
+  feedbackGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  feedbackTool: {
+    backgroundColor: colors.soft,
+    borderRadius: 18,
+    flexBasis: "48%",
+    flexGrow: 1,
+    gap: spacing.xs,
+    minHeight: 78,
+    padding: spacing.md
+  },
+  feedbackToolLabel: {
+    color: colors.blue,
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  feedbackToolValue: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "800",
+    lineHeight: 21
   },
   lessonReadyCard: {
     backgroundColor: colors.surface,
@@ -583,5 +702,33 @@ export const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 16,
     lineHeight: 24
+  },
+  correctionDivider: {
+    backgroundColor: colors.line,
+    height: 1
+  },
+  wordScoreGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  wordScorePill: {
+    alignItems: "center",
+    backgroundColor: colors.soft,
+    borderRadius: 18,
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  wordScoreWord: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  wordScoreValue: {
+    color: colors.green,
+    fontSize: 14,
+    fontWeight: "900"
   }
 });

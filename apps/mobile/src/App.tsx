@@ -16,29 +16,67 @@ import { styles } from "./design-system";
 import { presentDebugLessonReminder, registerNativePushToken } from "./native/NativeNotificationBridge";
 
 const options = [
-  { label: "미국식 영어", caption: "Emma와 자연스러운 일상 대화" },
-  { label: "영국식 영어", caption: "차분한 억양과 표현 연습" }
+  { label: "일상 회화", caption: "언제든 말문을 트는 개인 AI 튜터" },
+  { label: "비즈니스 영어", caption: "회의, 인터뷰, 발표를 실전처럼 연습" },
+  { label: "시험·고급 표현", caption: "긴 답변과 자연스러운 재표현 훈련" }
 ];
 
 const lessonMessages = [
   {
     role: "ai",
-    text: "Nice to meet you, Joey! I'm Emma, your personal AI English tutor. Tell me, where are you from?"
+    text: "Hi Joey, I'm Emma. Let's practice checking in at a hotel. Could you tell me what kind of room you booked?"
   },
   {
     role: "user",
-    text: "I'm from Korea.",
-    highlight: "I'm from"
+    text: "I booked a single room for two nights.",
+    highlight: "single room"
   },
   {
     role: "ai",
-    text: "Nice to meet you! Korea is a beautiful country. What is your favorite food from Korea?"
+    text: "Great. You can also say, I have a reservation for a single room for two nights. Would you like to try that?"
   },
   {
     role: "user",
-    text: "Yes, I like eating kimchi.",
-    highlight: "like"
+    text: "I have a reservation for a single room for two nights.",
+    highlight: "reservation"
   }
+];
+
+const lessonModules = [
+  {
+    eyebrow: "Role-play",
+    title: "Job interview",
+    body: "예상 질문에 바로 답하고 꼬리질문까지 연습"
+  },
+  {
+    eyebrow: "Daily lesson",
+    title: "Hotel check-in",
+    body: "오늘 예약된 15분 실전 대화"
+  },
+  {
+    eyebrow: "Read & talk",
+    title: "AI at work",
+    body: "짧은 글을 읽고 내 의견 말하기"
+  }
+];
+
+const feedbackTools = [
+  { label: "Grammar", value: "문법 교정" },
+  { label: "Pronunciation", value: "발음 점수" },
+  { label: "Rephrase", value: "자연스러운 표현" },
+  { label: "Accent", value: "억양 코칭" }
+];
+
+const scoreRows = [
+  { label: "발음", score: 86 },
+  { label: "유창성", score: 72 },
+  { label: "문법", score: 78 }
+];
+
+const pronunciationItems = [
+  { word: "reservation", score: 87 },
+  { word: "available", score: 74 },
+  { word: "quiet", score: 91 }
 ];
 
 export default function App() {
@@ -104,7 +142,7 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.onboardingContainer}>
           <Image source={tutorImage} style={styles.heroImage} resizeMode="cover" />
           <View style={styles.onboardingBody}>
-            <Text style={styles.onboardingTitle}>어떤 영어를 배우고 싶으신가요?</Text>
+            <Text style={styles.onboardingTitle}>어떤 영어 상황을 가장 먼저 연습할까요?</Text>
             <View style={styles.optionList}>
               {options.map((option) => {
                 const selected = selectedVariant === option.label;
@@ -152,26 +190,30 @@ export default function App() {
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.homeContainer}>
+        <View style={styles.productHeader}>
+          <Text style={styles.productKicker}>AI 영어 튜터</Text>
+          <Text style={styles.productTitle}>언제든 말할 수 있는 Emma</Text>
+          <Text style={styles.productBody}>예약 알림으로 시작하고, 수업 중에는 실시간 대화와 피드백을 받아요.</Text>
+        </View>
+
         <View style={styles.metricRow}>
-          <View style={styles.metricChip}>
-            <Text style={styles.metricLabel}>연속</Text>
-            <Text style={styles.metricValue}>1</Text>
-          </View>
-          <View style={styles.metricChipPink}>
-            <Text style={styles.metricLabel}>보석</Text>
-            <Text style={styles.metricValuePink}>10</Text>
-          </View>
-          <View style={styles.metricChipGold}>
-            <Text style={styles.metricLabel}>별</Text>
-            <Text style={styles.metricValueGold}>14</Text>
-          </View>
+          {[
+            ["15분", "오늘 수업"],
+            ["24/7", "연습 가능"],
+            ["4개", "피드백"]
+          ].map(([value, label]) => (
+            <View key={label} style={styles.metricChip}>
+              <Text style={styles.metricValue}>{value}</Text>
+              <Text style={styles.metricLabel}>{label}</Text>
+            </View>
+          ))}
         </View>
 
         <View style={styles.dailyCard}>
           <View>
-            <Text style={styles.cardEyebrow}>오늘의 일일 레슨</Text>
-            <Text style={styles.cardTitle}>호텔 체크인</Text>
-            <Text style={styles.cardBody}>Emma와 15분 동안 예약 수업을 연습해요.</Text>
+            <Text style={styles.cardEyebrow}>Your personal AI tutor</Text>
+            <Text style={styles.cardTitle}>오늘의 대화</Text>
+            <Text style={styles.cardBody}>호텔 체크인 상황에서 자연스럽게 요청하고 답하는 법을 연습해요.</Text>
           </View>
           <Image source={tutorImage} style={styles.tutorBadge} resizeMode="cover" />
           <View style={styles.cardActions}>
@@ -181,6 +223,43 @@ export default function App() {
             <TouchableOpacity style={styles.translucentButton} onPress={showDebugReminder} accessibilityRole="button">
               <Text style={styles.translucentButtonText}>Mock 알림</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.moduleSection}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitleDark}>Lessons</Text>
+            <Text style={styles.sectionLink}>전체 보기</Text>
+          </View>
+          {lessonModules.map((module) => (
+            <TouchableOpacity
+              key={module.title}
+              style={styles.moduleCard}
+              onPress={() => setState(module.title === "Hotel check-in" ? "LESSON_READY" : "LESSON_ACTIVE")}
+              accessibilityRole="button"
+            >
+              <View style={styles.moduleIcon}>
+                <Text style={styles.moduleIconText}>{module.title.slice(0, 1)}</Text>
+              </View>
+              <View style={styles.moduleCopy}>
+                <Text style={styles.moduleEyebrow}>{module.eyebrow}</Text>
+                <Text style={styles.moduleTitle}>{module.title}</Text>
+                <Text style={styles.moduleBody}>{module.body}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.feedbackCard}>
+          <Text style={styles.sectionKicker}>Instant feedback</Text>
+          <Text style={styles.feedbackTitle}>말하면 바로 고쳐줘요</Text>
+          <View style={styles.feedbackGrid}>
+            {feedbackTools.map((tool) => (
+              <View key={tool.label} style={styles.feedbackTool}>
+                <Text style={styles.feedbackToolLabel}>{tool.label}</Text>
+                <Text style={styles.feedbackToolValue}>{tool.value}</Text>
+              </View>
+            ))}
           </View>
         </View>
 
@@ -204,9 +283,9 @@ export default function App() {
         </View>
 
         <View style={styles.practiceCard}>
-          <Text style={styles.sectionKicker}>발음 핵심 정리</Text>
-          <Text style={styles.practiceTitle}>/b/ vs /v/</Text>
-          <Text style={styles.practiceBody}>수업 후 리포트에서 발음, 유창성, 문법을 함께 확인합니다.</Text>
+          <Text style={styles.sectionKicker}>Talk about anything</Text>
+          <Text style={styles.practiceTitle}>내 주제로 바로 대화</Text>
+          <Text style={styles.practiceBody}>스포츠, 여행, 업무, 책, 영화처럼 원하는 주제로 말하기 연습을 시작할 수 있어요.</Text>
         </View>
 
         <View style={styles.debugPanel}>
@@ -301,11 +380,7 @@ function ResultScreen({
 
         <View style={styles.reportCard}>
           <Text style={styles.sectionKicker}>내 대화 기술</Text>
-          {[
-            ["발음", 86],
-            ["유창성", 72],
-            ["문법", 78]
-          ].map(([label, score]) => (
+          {scoreRows.map(({ label, score }) => (
             <View key={label} style={styles.scoreRow}>
               <Text style={styles.scoreLabel}>{label}</Text>
               <View style={styles.scoreTrack}>
@@ -314,6 +389,26 @@ function ResultScreen({
               <Text style={styles.scoreValue}>{score}</Text>
             </View>
           ))}
+        </View>
+
+        <View style={styles.reportCard}>
+          <Text style={styles.sectionKicker}>Grammar</Text>
+          <Text style={styles.reviewBody}>I want room quiet.</Text>
+          <View style={styles.correctionDivider} />
+          <Text style={styles.reviewPrompt}>I’d like a quiet room, please.</Text>
+          <Text style={styles.reviewBody}>더 정중하고 자연스러운 요청 표현입니다.</Text>
+        </View>
+
+        <View style={styles.reportCard}>
+          <Text style={styles.sectionKicker}>Pronunciation</Text>
+          <View style={styles.wordScoreGrid}>
+            {pronunciationItems.map((item) => (
+              <View key={item.word} style={styles.wordScorePill}>
+                <Text style={styles.wordScoreWord}>{item.word}</Text>
+                <Text style={styles.wordScoreValue}>{item.score}%</Text>
+              </View>
+            ))}
+          </View>
         </View>
 
         {showReview ? (
