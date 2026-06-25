@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 
 const required = [
   "apps/mobile/src/App.tsx",
-  "apps/mobile/ios/AIPhoneEnglish/NativeCallModule.swift",
-  "apps/mobile/android/app/src/main/java/com/aiphoneenglish/NativeCallModule.kt",
+  "apps/mobile/ios/AIPhoneEnglish/NotificationModule.swift",
+  "apps/mobile/android/app/src/main/java/com/aiphoneenglish/NotificationModule.kt",
   "apps/api/src/main.ts",
   "apps/worker/src/main.ts",
   "apps/admin/app/page.tsx",

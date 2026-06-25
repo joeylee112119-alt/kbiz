@@ -48,6 +48,41 @@ services:
       timeout: 3s
       retries: 10
 
+  mock-notification:
+    image: node:24-alpine
+    command:
+      - node
+      - -e
+      - |
+        const http = require("http");
+        const deliveries = [];
+        http.createServer((req, res) => {
+          if (req.method === "GET" && req.url === "/health") {
+            res.writeHead(200, {"content-type":"application/json"});
+            res.end(JSON.stringify({ok:true, service:"mock-notification", deliveries:deliveries.length}));
+            return;
+          }
+          if (req.method === "POST" && req.url === "/deliveries") {
+            let body = "";
+            req.on("data", chunk => body += chunk);
+            req.on("end", () => {
+              deliveries.push({receivedAt:new Date().toISOString(), body: body ? JSON.parse(body) : {}});
+              res.writeHead(202, {"content-type":"application/json"});
+              res.end(JSON.stringify({accepted:true, count:deliveries.length}));
+            });
+            return;
+          }
+          res.writeHead(404);
+          res.end();
+        }).listen(5088, "0.0.0.0");
+    ports:
+      - "${MOCK_NOTIFICATION_PORT:-55088}:5088"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5088/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build:
       context: .
@@ -58,10 +93,13 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/aiphone
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://object-storage:9000
+      MOCK_NOTIFICATION_URL: http://mock-notification:5088/deliveries
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      mock-notification:
         condition: service_healthy
     ports:
       - "4000:4000"
@@ -76,10 +114,13 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/aiphone
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://object-storage:9000
+      MOCK_NOTIFICATION_URL: http://mock-notification:5088/deliveries
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      mock-notification:
         condition: service_healthy
     ports:
       - "4001:4001"

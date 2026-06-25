@@ -1,6 +1,6 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
-import type { CallScheduleRequest, LearnerProfile } from "@aiphone/contracts";
+import type { LessonScheduleRequest, LearnerProfile } from "@aiphone/contracts";
 import { onboardingOptions, validateLessonReport } from "@aiphone/contracts";
 import { defaultStageDurations } from "@aiphone/lesson-engine";
 import { buildRealtimeSessionUpdate } from "@aiphone/realtime-client";
@@ -97,153 +97,217 @@ export class AppService {
     return serializeUser(user);
   }
 
-  async createSchedule(userId: string, request: CallScheduleRequest): Promise<Record<string, unknown>> {
+  async createSchedule(userId: string, request: LessonScheduleRequest): Promise<Record<string, unknown>> {
     await this.ensureUser(userId);
-    const schedule = await this.prisma.callSchedule.create({
+    const tutor = await this.ensureTutor();
+    const schedule = await this.prisma.lessonSchedule.create({
       data: {
         userId,
-        weekdays: request.weekdays,
+        tutorId: tutor.id,
+        daysOfWeek: request.daysOfWeek,
         localTime: request.localTime,
         timezone: request.timezone,
-        lessonDurationMinutes: request.lessonDurationMinutes,
-        holidayPauseEnabled: request.holidayPauseEnabled,
-        nextRunAt: computeNextRunAt(request.localTime),
-        retryPolicy: { maxAttempts: 3, backoffMs: 30_000 }
+        durationMinutes: request.durationMinutes,
+        preReminderMinutes: request.preReminderMinutes ?? 10,
+        enabled: request.enabled ?? true,
+        nextRunAt: computeNextRunAt(request.localTime)
       }
     });
-    await this.prisma.user.update({ where: { id: userId }, data: { appState: "CALL_SCHEDULED" } });
-    await this.createOutbox("CallSchedule", schedule.id, "call_schedule.created", schedule, schedule.id);
+    const occurrence = await this.materializeOccurrence(schedule.id);
+    await this.prisma.user.update({ where: { id: userId }, data: { appState: "LESSON_SCHEDULED" } });
+    await this.createOutbox("LessonSchedule", schedule.id, "lesson_schedule.created", { schedule, occurrence }, schedule.id);
     return serializeSchedule(schedule);
   }
 
   async listSchedules(userId?: string): Promise<Array<Record<string, unknown>>> {
-    const schedules = await this.prisma.callSchedule.findMany({
-      where: { ...(userId ? { userId } : {}), deletedAt: null },
+    const schedules = await this.prisma.lessonSchedule.findMany({
+      where: { ...(userId ? { userId } : {}) },
       orderBy: { createdAt: "desc" }
     });
     return schedules.map(serializeSchedule);
   }
 
-  async updateSchedule(id: string, body: Partial<CallScheduleRequest>): Promise<Record<string, unknown>> {
-    const schedule = await this.prisma.callSchedule.update({
+  async getSchedule(id: string): Promise<Record<string, unknown>> {
+    return serializeSchedule(await this.prisma.lessonSchedule.findUniqueOrThrow({ where: { id } }));
+  }
+
+  async updateSchedule(id: string, body: Partial<LessonScheduleRequest>): Promise<Record<string, unknown>> {
+    const schedule = await this.prisma.lessonSchedule.update({
       where: { id },
       data: pruneUndefined({
-        weekdays: body.weekdays,
+        daysOfWeek: body.daysOfWeek,
         localTime: body.localTime,
         timezone: body.timezone,
-        lessonDurationMinutes: body.lessonDurationMinutes,
-        holidayPauseEnabled: body.holidayPauseEnabled,
+        durationMinutes: body.durationMinutes,
+        preReminderMinutes: body.preReminderMinutes,
+        enabled: body.enabled,
         nextRunAt: body.localTime ? computeNextRunAt(body.localTime) : undefined,
-        version: { increment: 1 }
       })
     });
+    await this.createOutbox("LessonSchedule", schedule.id, "lesson_schedule.updated", schedule, `schedule-updated:${schedule.id}:${schedule.updatedAt.toISOString()}`);
     return serializeSchedule(schedule);
   }
 
   async pauseSchedule(id: string): Promise<Record<string, unknown>> {
-    const schedule = await this.prisma.callSchedule.update({ where: { id }, data: { pausedAt: new Date() } });
+    const schedule = await this.prisma.lessonSchedule.update({ where: { id }, data: { enabled: false } });
     return serializeSchedule(schedule);
   }
 
   async resumeSchedule(id: string): Promise<Record<string, unknown>> {
-    const schedule = await this.prisma.callSchedule.update({ where: { id }, data: { pausedAt: null } });
+    const schedule = await this.prisma.lessonSchedule.update({ where: { id }, data: { enabled: true } });
+    await this.materializeOccurrence(schedule.id);
     return serializeSchedule(schedule);
   }
 
   async deleteSchedule(id: string): Promise<Record<string, unknown>> {
-    const schedule = await this.prisma.callSchedule.update({ where: { id }, data: { deletedAt: new Date() } });
+    const schedule = await this.prisma.lessonSchedule.update({ where: { id }, data: { enabled: false } });
     return { ...serializeSchedule(schedule), deleted: true };
   }
 
-  async startNow(userId: string): Promise<Record<string, unknown>> {
+  async listUpcomingOccurrences(userId?: string): Promise<Array<Record<string, unknown>>> {
+    const occurrences = await this.prisma.lessonOccurrence.findMany({
+      where: {
+        ...(userId ? { userId } : {}),
+        status: { in: ["SCHEDULED", "NOTIFICATION_PENDING", "NOTIFIED", "READY", "SNOOZED"] }
+      },
+      include: { lessonTemplate: true, tutor: true },
+      orderBy: { scheduledAt: "asc" },
+      take: 20
+    });
+    return occurrences.map(serializeOccurrence);
+  }
+
+  async getOccurrence(id: string): Promise<Record<string, unknown>> {
+    return serializeOccurrence(await this.prisma.lessonOccurrence.findUniqueOrThrow({ where: { id }, include: { lessonTemplate: true, tutor: true } }));
+  }
+
+  async startNowOccurrence(userId: string): Promise<Record<string, unknown>> {
     await this.ensureUser(userId);
     const tutor = await this.ensureTutor();
     const now = new Date();
-    const call = await this.prisma.callAttempt.create({
+    const template = await this.findDefaultLessonTemplate();
+    const occurrence = await this.prisma.lessonOccurrence.create({
       data: {
         userId,
         tutorId: tutor.id,
-        status: "RINGING",
-        startsAt: now,
-        expiresAt: new Date(now.getTime() + 45_000),
-        iosCallKitUuid: randomUUID(),
-        androidCallId: randomUUID(),
+        lessonTemplateId: template.id,
+        status: "READY",
+        scheduledAt: now,
+        availableFrom: now,
+        expiresAt: new Date(now.getTime() + 30 * 60_000),
         idempotencyKey: `start-now:${userId}:${now.toISOString()}`
       }
     });
-    await this.prisma.user.update({ where: { id: userId }, data: { appState: "CALL_RINGING" } });
-    await this.createOutbox("CallAttempt", call.id, "call_attempt.ringing", call, `call-ringing:${call.id}`);
-    return serializeCall(call);
+    await this.prisma.user.update({ where: { id: userId }, data: { appState: "LESSON_READY" } });
+    await this.createOutbox("LessonOccurrence", occurrence.id, "lesson_occurrence.created", occurrence, `occurrence:${occurrence.id}`);
+    return serializeOccurrence(occurrence);
   }
 
-  async getCall(id: string): Promise<Record<string, unknown>> {
-    return serializeCall(await this.prisma.callAttempt.findUniqueOrThrow({ where: { id } }));
+  async openOccurrence(id: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const occurrence = await this.prisma.lessonOccurrence.findUnique({ where: { id } });
+    if (!occurrence) throw new NotFoundException("OCCURRENCE_NOT_FOUND");
+    if (occurrence.expiresAt.getTime() < Date.now()) {
+      const expired = await this.prisma.lessonOccurrence.update({ where: { id }, data: { status: "EXPIRED" } });
+      return { occurrence: serializeOccurrence(expired), error: "OCCURRENCE_EXPIRED" };
+    }
+    const opened = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.lessonOccurrence.update({
+        where: { id },
+        data: { status: "READY", version: { increment: 1 } }
+      });
+      if (body.notificationDeliveryId) {
+        await tx.notificationDelivery.updateMany({
+          where: { id: String(body.notificationDeliveryId), occurrenceId: id },
+          data: { status: "OPENED", openedAt: new Date() }
+        });
+      }
+      await tx.user.update({ where: { id: updated.userId }, data: { appState: "LESSON_READY" } });
+      return updated;
+    });
+    await this.createOutbox("LessonOccurrence", id, "lesson_reminder.opened", { occurrenceId: id }, `occurrence-opened:${id}`);
+    return serializeOccurrence(opened);
   }
 
-  async acceptCall(callId: string): Promise<Record<string, unknown>> {
-    const call = await this.prisma.callAttempt.findUnique({ where: { id: callId } });
-    if (!call) throw new NotFoundException("CALL_NOT_FOUND");
-    if (call.expiresAt.getTime() < Date.now()) {
-      const expired = await this.prisma.callAttempt.update({ where: { id: callId }, data: { status: "EXPIRED" } });
-      return { call: serializeCall(expired), error: "CALL_EXPIRED" };
+  async startOccurrence(occurrenceId: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const occurrence = await this.prisma.lessonOccurrence.findUnique({ where: { id: occurrenceId } });
+    if (!occurrence) throw new NotFoundException("OCCURRENCE_NOT_FOUND");
+    if (occurrence.expiresAt.getTime() < Date.now()) {
+      const expired = await this.prisma.lessonOccurrence.update({ where: { id: occurrenceId }, data: { status: "EXPIRED" } });
+      return { occurrence: serializeOccurrence(expired), error: "OCCURRENCE_EXPIRED" };
     }
     const tutor = await this.ensureTutor();
     const templateVersion = await this.findDefaultLessonTemplateVersion();
-    const accepted = await this.prisma.$transaction(async (tx) => {
-      const updatedCall = await tx.callAttempt.update({
-        where: { id: callId },
-        data: { status: "ACCEPTED", acceptedAt: new Date() }
+    const started = await this.prisma.$transaction(async (tx) => {
+      const updatedOccurrence = await tx.lessonOccurrence.update({
+        where: { id: occurrenceId },
+        data: { status: "STARTING", startedAt: new Date(), version: { increment: 1 } }
       });
       const session = await tx.lessonSession.upsert({
-        where: { callAttemptId: callId },
+        where: { occurrenceId },
         update: { state: "CHECK_IN" },
         create: {
-          userId: updatedCall.userId,
-          callAttemptId: callId,
+          userId: updatedOccurrence.userId,
+          occurrenceId,
           tutorId: tutor.id,
           lessonTemplateVersionId: templateVersion?.id ?? null,
           state: "CHECK_IN",
           timeScale: Number(process.env.LESSON_TIME_SCALE ?? "1")
         }
       });
-      await tx.user.update({ where: { id: updatedCall.userId }, data: { appState: "CALL_CONNECTING" } });
+      if (body.notificationDeliveryId) {
+        await tx.notificationDelivery.updateMany({
+          where: { id: String(body.notificationDeliveryId), occurrenceId },
+          data: { status: "ACTIONED", actionedAt: new Date() }
+        });
+      }
+      await tx.user.update({ where: { id: updatedOccurrence.userId }, data: { appState: "LESSON_ACTIVE" } });
       await tx.outboxEvent.upsert({
-        where: { idempotencyKey: `call-accepted:${callId}` },
+        where: { idempotencyKey: `lesson-started:${occurrenceId}` },
         update: {},
         create: {
-          aggregateType: "CallAttempt",
-          aggregateId: callId,
-          eventType: "call_attempt.accepted",
-          payload: { callAttemptId: callId, lessonSessionId: session.id },
-          idempotencyKey: `call-accepted:${callId}`
+          aggregateType: "LessonOccurrence",
+          aggregateId: occurrenceId,
+          eventType: "lesson_started",
+          payload: { occurrenceId, lessonSessionId: session.id },
+          idempotencyKey: `lesson-started:${occurrenceId}`
         }
       });
-      return { call: updatedCall, session };
+      return { occurrence: updatedOccurrence, session };
     });
-    return { call: serializeCall(accepted.call), lessonSessionId: accepted.session.id };
+    return { occurrence: serializeOccurrence(started.occurrence), lessonSessionId: started.session.id };
   }
 
-  async declineCall(callId: string): Promise<Record<string, unknown>> {
-    const call = await this.prisma.callAttempt.update({ where: { id: callId }, data: { status: "DECLINED", endedAt: new Date() } });
-    return serializeCall(call);
-  }
-
-  async snoozeCall(callId: string): Promise<Record<string, unknown>> {
-    const startsAt = new Date(Date.now() + 10 * 60_000);
-    const call = await this.prisma.callAttempt.update({
-      where: { id: callId },
+  async snoozeOccurrence(id: string): Promise<Record<string, unknown>> {
+    const occurrence = await this.prisma.lessonOccurrence.findUniqueOrThrow({ where: { id } });
+    if (occurrence.snoozeCount >= 2) {
+      return { ...serializeOccurrence(occurrence), snoozeRejected: true, reason: "MAX_SNOOZE_REACHED" };
+    }
+    const scheduledAt = new Date(Date.now() + 10 * 60_000);
+    const updated = await this.prisma.lessonOccurrence.update({
+      where: { id },
       data: {
         status: "SNOOZED",
-        startsAt,
-        expiresAt: new Date(startsAt.getTime() + 45_000)
+        snoozeCount: { increment: 1 },
+        scheduledAt,
+        availableFrom: scheduledAt,
+        expiresAt: new Date(scheduledAt.getTime() + 30 * 60_000),
+        version: { increment: 1 }
       }
     });
-    return serializeCall(call);
+    await this.createOutbox("LessonOccurrence", id, "lesson_snoozed", updated, `snooze:${id}:${updated.snoozeCount}`);
+    return serializeOccurrence(updated);
   }
 
-  async endCall(callId: string): Promise<Record<string, unknown>> {
-    const call = await this.prisma.callAttempt.update({ where: { id: callId }, data: { status: "COMPLETED", endedAt: new Date() } });
-    return serializeCall(call);
+  async skipOccurrence(id: string): Promise<Record<string, unknown>> {
+    const occurrence = await this.prisma.lessonOccurrence.update({ where: { id }, data: { status: "SKIPPED", version: { increment: 1 } } });
+    await this.createOutbox("LessonOccurrence", id, "lesson_skipped", occurrence, `skip:${id}`);
+    return serializeOccurrence(occurrence);
+  }
+
+  async dismissOccurrence(id: string): Promise<Record<string, unknown>> {
+    const occurrence = await this.prisma.lessonOccurrence.update({ where: { id }, data: { status: "MISSED", version: { increment: 1 } } });
+    await this.createOutbox("LessonOccurrence", id, "lesson_missed", occurrence, `dismiss:${id}`);
+    return serializeOccurrence(occurrence);
   }
 
   async createRealtimeSession(lessonSessionId: string, deviceId: string, localSdp?: string): Promise<Record<string, unknown>> {
@@ -302,7 +366,7 @@ export class AppService {
           objective: "오늘 컨디션 확인"
         }
       });
-      await tx.callAttempt.updateMany({
+      await tx.lessonOccurrence.updateMany({
         where: { lessonSession: { id: lessonSessionId } },
         data: { status: "ACTIVE" }
       });
@@ -378,9 +442,9 @@ export class AppService {
         where: { id: lessonSessionId },
         data: { state: "COMPLETED", actualEndAt: now }
       });
-      await tx.callAttempt.updateMany({
+      await tx.lessonOccurrence.updateMany({
         where: { lessonSession: { id: lessonSessionId } },
-        data: { status: "COMPLETED", endedAt: now }
+        data: { status: "COMPLETED", completedAt: now }
       });
       await tx.user.update({ where: { id: updated.userId }, data: { appState: "RESULT_GENERATING" } });
       return updated;
@@ -476,18 +540,32 @@ export class AppService {
   }
 
   async listAdminMetrics(): Promise<Record<string, number>> {
-    const [users, schedules, missedCalls, completedLessons] = await Promise.all([
+    const [users, schedules, sentNotifications, openedNotifications, readyViews, startedLessons, completedLessons, snoozed, skipped, missed] = await Promise.all([
       this.prisma.user.count({ where: { deletedAt: null } }),
-      this.prisma.callSchedule.count({ where: { deletedAt: null } }),
-      this.prisma.callAttempt.count({ where: { status: "MISSED" } }),
-      this.prisma.lessonSession.count({ where: { state: "COMPLETED" } })
+      this.prisma.lessonSchedule.count({ where: { enabled: true } }),
+      this.prisma.notificationDelivery.count({ where: { status: "SENT" } }),
+      this.prisma.notificationDelivery.count({ where: { status: { in: ["OPENED", "ACTIONED"] } } }),
+      this.prisma.lessonOccurrence.count({ where: { status: "READY" } }),
+      this.prisma.lessonOccurrence.count({ where: { startedAt: { not: null } } }),
+      this.prisma.lessonSession.count({ where: { state: "COMPLETED" } }),
+      this.prisma.lessonOccurrence.count({ where: { status: "SNOOZED" } }),
+      this.prisma.lessonOccurrence.count({ where: { status: "SKIPPED" } }),
+      this.prisma.lessonOccurrence.count({ where: { status: "MISSED" } })
     ]);
     return {
       dailyActiveUsers: users,
-      scheduledCalls: schedules,
-      missedCalls,
-      callAnswerRate: 0,
+      scheduledLessons: schedules,
+      pushSent: sentNotifications,
+      reminderOpened: openedNotifications,
+      readyViews,
+      lessonStarted: startedLessons,
       lessonCompletionRate: completedLessons,
+      notificationClickRate: sentNotifications ? openedNotifications / sentNotifications : 0,
+      clickToLessonStartRate: openedNotifications ? startedLessons / openedNotifications : 0,
+      completionRate: startedLessons ? completedLessons / startedLessons : 0,
+      snoozeRate: schedules ? snoozed / schedules : 0,
+      skipRate: schedules ? skipped / schedules : 0,
+      missedRate: schedules ? missed / schedules : 0,
       averageUserSpeakingRatio: 0,
       realtimeErrorRate: 0
     };
@@ -611,19 +689,57 @@ export class AppService {
 
   async listLessonSessions(): Promise<Array<Record<string, unknown>>> {
     const sessions = await this.prisma.lessonSession.findMany({
-      include: { transcriptSegments: true, callAttempt: true },
+      include: { transcriptSegments: true, occurrence: true },
       orderBy: { createdAt: "desc" },
       take: 50
     });
     return sessions.map((session) => ({
       id: session.id,
       userId: session.userId,
-      callAttemptId: session.callAttemptId,
+      occurrenceId: session.occurrenceId,
       state: session.state,
       transcriptCount: session.transcriptSegments.length,
-      callStatus: session.callAttempt?.status ?? null,
+      occurrenceStatus: session.occurrence?.status ?? null,
       createdAt: session.createdAt.toISOString()
     }));
+  }
+
+  async listNotificationDeliveries(): Promise<Array<Record<string, unknown>>> {
+    const deliveries = await this.prisma.notificationDelivery.findMany({
+      include: { occurrence: true },
+      orderBy: { createdAt: "desc" },
+      take: 100
+    });
+    return deliveries.map(serializeNotificationDelivery);
+  }
+
+  async notificationOpened(id: string): Promise<Record<string, unknown>> {
+    const delivery = await this.prisma.notificationDelivery.update({
+      where: { id },
+      data: { status: "OPENED", openedAt: new Date() },
+      include: { occurrence: true }
+    });
+    await this.openOccurrence(delivery.occurrenceId, { notificationDeliveryId: id });
+    return serializeNotificationDelivery(delivery);
+  }
+
+  async sendTestNotification(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const occurrenceId = String(body.occurrenceId);
+    const occurrence = await this.prisma.lessonOccurrence.findUniqueOrThrow({ where: { id: occurrenceId } });
+    const delivery = await this.prisma.notificationDelivery.create({
+      data: {
+        occurrenceId,
+        notificationType: "LESSON_REMINDER",
+        provider: String(body.provider ?? "mock"),
+        status: "SENT",
+        scheduledFor: new Date(),
+        sentAt: new Date(),
+        providerMessageId: `mock-${randomUUID()}`,
+        idempotencyKey: `test-notification:${occurrenceId}:${randomUUID()}`
+      }
+    });
+    await this.prisma.lessonOccurrence.update({ where: { id: occurrence.id }, data: { status: "NOTIFIED" } });
+    return serializeNotificationDelivery(delivery);
   }
 
   async listPromptVersions(): Promise<Array<Record<string, unknown>>> {
@@ -704,11 +820,16 @@ export class AppService {
     const provider = String(body.provider ?? "unknown");
     const token = await this.prisma.pushToken.upsert({
       where: { provider_tokenHash: { provider, tokenHash: hashToken(rawToken) } },
-      update: pruneUndefined({ revokedAt: null, expiresAt: body.expiresAt ? new Date(String(body.expiresAt)) : undefined }),
+      update: pruneUndefined({
+        revokedAt: null,
+        tokenValue: rawToken,
+        expiresAt: body.expiresAt ? new Date(String(body.expiresAt)) : undefined
+      }),
       create: {
         deviceId,
         provider,
         tokenHash: hashToken(rawToken),
+        tokenValue: rawToken,
         tokenLast4: rawToken.slice(-4),
         expiresAt: body.expiresAt ? new Date(String(body.expiresAt)) : null
       }
@@ -758,6 +879,89 @@ export class AppService {
       orderBy: { createdAt: "asc" },
       select: { id: true }
     });
+  }
+
+  private async findDefaultLessonTemplate(): Promise<{ id: string }> {
+    const existing = await this.prisma.lessonTemplate.findFirst({
+      where: { status: "PUBLISHED" },
+      orderBy: { createdAt: "asc" },
+      select: { id: true }
+    });
+    if (existing) return existing;
+
+    const template = await this.prisma.lessonTemplate.upsert({
+      where: { slug: "hotel-checkin-a1" },
+      update: { status: "PUBLISHED" },
+      create: {
+        slug: "hotel-checkin-a1",
+        titleKo: "호텔 체크인",
+        titleEn: "Hotel check-in",
+        level: "A1",
+        category: "travel",
+        status: "PUBLISHED",
+        versions: {
+          create: {
+            version: 1,
+            objective: "호텔 체크인 상황에서 예약 확인과 요청 표현을 연습합니다.",
+            estimatedDuration: 900,
+            status: "PUBLISHED",
+            stages: {
+              create: [
+                {
+                  stageType: "CHECK_IN",
+                  sequence: 1,
+                  plannedDurationSeconds: 40,
+                  objective: "오늘 컨디션 확인",
+                  entryCondition: "Learner starts the lesson.",
+                  exitCondition: "Learner answers a short check-in.",
+                  promptInstruction: "Greet the learner and ask one easy check-in question.",
+                  backchannelEnabled: true,
+                  correctionPolicy: "IMMEDIATE_IMPORTANT_ONLY"
+                },
+                {
+                  stageType: "TARGET_PHRASES",
+                  sequence: 2,
+                  plannedDurationSeconds: 180,
+                  objective: "핵심 체크인 표현 연습",
+                  entryCondition: "Check-in is complete.",
+                  exitCondition: "Learner practices two target phrases.",
+                  promptInstruction: "Practice 'I'd like to check in' and 'Could I get a quiet room?'",
+                  backchannelEnabled: false,
+                  correctionPolicy: "IMMEDIATE_IMPORTANT_ONLY"
+                }
+              ]
+            }
+          }
+        }
+      },
+      select: { id: true }
+    });
+    return template;
+  }
+
+  private async materializeOccurrence(scheduleId: string): Promise<Record<string, unknown>> {
+    const schedule = await this.prisma.lessonSchedule.findUniqueOrThrow({ where: { id: scheduleId } });
+    const template = await this.findDefaultLessonTemplate();
+    const scheduledAt = schedule.nextRunAt;
+    const availableFrom = new Date(scheduledAt.getTime() - (schedule.preReminderMinutes ?? 10) * 60_000);
+    const expiresAt = new Date(scheduledAt.getTime() + schedule.durationMinutes * 60_000 + 15 * 60_000);
+    const occurrence = await this.prisma.lessonOccurrence.upsert({
+      where: { idempotencyKey: `schedule:${schedule.id}:${scheduledAt.toISOString()}` },
+      update: {},
+      create: {
+        scheduleId: schedule.id,
+        userId: schedule.userId,
+        tutorId: schedule.tutorId,
+        lessonTemplateId: template.id,
+        scheduledAt,
+        availableFrom,
+        expiresAt,
+        status: "SCHEDULED",
+        idempotencyKey: `schedule:${schedule.id}:${scheduledAt.toISOString()}`
+      },
+      include: { lessonTemplate: true, tutor: true }
+    });
+    return serializeOccurrence(occurrence);
   }
 
   private async audit(action: string, targetType: string, targetId: string, before: unknown, after: unknown): Promise<void> {
@@ -832,54 +1036,105 @@ function serializeUser(user: { id: string; displayName: string | null; appState:
 function serializeSchedule(schedule: {
   id: string;
   userId: string;
-  weekdays: number[];
+  tutorId: string;
+  daysOfWeek: number[];
   localTime: string;
   timezone: string;
-  lessonDurationMinutes: number;
-  holidayPauseEnabled: boolean;
-  pausedAt: Date | null;
+  durationMinutes: number;
+  preReminderMinutes: number | null;
+  enabled: boolean;
   nextRunAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
 }): Record<string, unknown> {
   return {
     id: schedule.id,
     userId: schedule.userId,
-    weekdays: schedule.weekdays,
+    tutorId: schedule.tutorId,
+    daysOfWeek: schedule.daysOfWeek,
     localTime: schedule.localTime,
     timezone: schedule.timezone,
-    lessonDurationMinutes: schedule.lessonDurationMinutes,
-    holidayPauseEnabled: schedule.holidayPauseEnabled,
-    pausedAt: schedule.pausedAt?.toISOString() ?? null,
-    nextRunAt: schedule.nextRunAt.toISOString()
+    durationMinutes: schedule.durationMinutes,
+    preReminderMinutes: schedule.preReminderMinutes,
+    enabled: schedule.enabled,
+    nextRunAt: schedule.nextRunAt.toISOString(),
+    createdAt: schedule.createdAt.toISOString(),
+    updatedAt: schedule.updatedAt.toISOString()
   };
 }
 
-function serializeCall(call: {
+function serializeOccurrence(occurrence: {
   id: string;
   scheduleId: string | null;
   status: string;
-  startsAt: Date;
+  scheduledAt: Date;
+  availableFrom: Date;
   expiresAt: Date;
   tutorId: string;
-  iosCallKitUuid: string | null;
-  androidCallId: string | null;
+  lessonTemplateId: string;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
+  snoozeCount?: number;
+  lessonTemplate?: { titleKo: string } | null;
+  tutor?: { name: string } | null;
 }): Record<string, unknown> {
   return {
-    id: call.id,
-    scheduleId: call.scheduleId,
-    status: call.status,
-    startsAt: call.startsAt.toISOString(),
-    expiresAt: call.expiresAt.toISOString(),
-    tutorId: call.tutorId,
-    topicKo: "호텔 체크인",
-    iosCallKitUuid: call.iosCallKitUuid ?? undefined,
-    androidCallId: call.androidCallId ?? undefined
+    id: occurrence.id,
+    scheduleId: occurrence.scheduleId,
+    status: occurrence.status,
+    scheduledAt: occurrence.scheduledAt.toISOString(),
+    availableFrom: occurrence.availableFrom.toISOString(),
+    expiresAt: occurrence.expiresAt.toISOString(),
+    tutorId: occurrence.tutorId,
+    tutorName: occurrence.tutor?.name ?? null,
+    lessonTemplateId: occurrence.lessonTemplateId,
+    topicKo: occurrence.lessonTemplate?.titleKo ?? "호텔 체크인",
+    startedAt: occurrence.startedAt?.toISOString() ?? null,
+    completedAt: occurrence.completedAt?.toISOString() ?? null,
+    snoozeCount: occurrence.snoozeCount ?? 0
+  };
+}
+
+function serializeNotificationDelivery(delivery: {
+  id: string;
+  occurrenceId: string;
+  deviceId: string | null;
+  pushTokenId: string | null;
+  notificationType: string;
+  provider: string;
+  providerMessageId: string | null;
+  status: string;
+  scheduledFor: Date;
+  sentAt: Date | null;
+  openedAt: Date | null;
+  actionedAt: Date | null;
+  failedAt: Date | null;
+  failureCode: string | null;
+  failureMessage: string | null;
+}): Record<string, unknown> {
+  return {
+    id: delivery.id,
+    occurrenceId: delivery.occurrenceId,
+    deviceId: delivery.deviceId,
+    pushTokenId: delivery.pushTokenId,
+    notificationType: delivery.notificationType,
+    provider: delivery.provider,
+    providerMessageId: delivery.providerMessageId,
+    status: delivery.status,
+    scheduledFor: delivery.scheduledFor.toISOString(),
+    sentAt: delivery.sentAt?.toISOString() ?? null,
+    openedAt: delivery.openedAt?.toISOString() ?? null,
+    actionedAt: delivery.actionedAt?.toISOString() ?? null,
+    failedAt: delivery.failedAt?.toISOString() ?? null,
+    failureCode: delivery.failureCode,
+    failureMessage: delivery.failureMessage
   };
 }
 
 function serializeLessonSession(session: {
   id: string;
   userId: string;
-  callAttemptId: string | null;
+  occurrenceId: string | null;
   state: string;
   startedAt: Date | null;
   plannedEndAt: Date | null;
@@ -888,7 +1143,7 @@ function serializeLessonSession(session: {
   return {
     sessionId: session.id,
     userId: session.userId,
-    callAttemptId: session.callAttemptId,
+    occurrenceId: session.occurrenceId,
     stage: session.state,
     startedAt: session.startedAt?.toISOString() ?? null,
     plannedEndAt: session.plannedEndAt?.toISOString() ?? null,

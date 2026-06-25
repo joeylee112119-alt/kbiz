@@ -54,13 +54,13 @@
     };
     APP_GROUP = {
       isa = PBXGroup;
-      children = (APP_DELEGATE_FILE, NATIVE_CALL_FILE, NATIVE_CALL_BRIDGE_FILE, INFO_PLIST_FILE, ENTITLEMENTS_FILE);
+      children = (APP_DELEGATE_FILE, NOTIFICATION_FILE, NOTIFICATION_BRIDGE_FILE, INFO_PLIST_FILE, ENTITLEMENTS_FILE);
       path = AIPhoneEnglish;
       sourceTree = "<group>";
     };
     TEST_GROUP = {
       isa = PBXGroup;
-      children = (NATIVE_CALL_TEST_FILE);
+      children = (NOTIFICATION_TEST_FILE);
       path = AIPhoneEnglishTests;
       sourceTree = "<group>";
     };
@@ -71,27 +71,27 @@
       sourceTree = "<group>";
     };
     APP_DELEGATE_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-    NATIVE_CALL_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCallModule.swift; sourceTree = "<group>"; };
-    NATIVE_CALL_BRIDGE_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = NativeCallModuleBridge.m; sourceTree = "<group>"; };
+    NOTIFICATION_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationModule.swift; sourceTree = "<group>"; };
+    NOTIFICATION_BRIDGE_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = NotificationModuleBridge.m; sourceTree = "<group>"; };
     INFO_PLIST_FILE = { isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
     ENTITLEMENTS_FILE = { isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AIPhoneEnglish.entitlements; sourceTree = "<group>"; };
-    NATIVE_CALL_TEST_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCallModuleTests.swift; sourceTree = "<group>"; };
+    NOTIFICATION_TEST_FILE = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationModuleTests.swift; sourceTree = "<group>"; };
     APP_PRODUCT = { isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AIPhoneEnglish.app; sourceTree = BUILT_PRODUCTS_DIR; };
     TEST_PRODUCT = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AIPhoneEnglishTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
     APP_DELEGATE_BUILD = { isa = PBXBuildFile; fileRef = APP_DELEGATE_FILE; };
-    NATIVE_CALL_BUILD = { isa = PBXBuildFile; fileRef = NATIVE_CALL_FILE; };
-    NATIVE_CALL_BRIDGE_BUILD = { isa = PBXBuildFile; fileRef = NATIVE_CALL_BRIDGE_FILE; };
-    NATIVE_CALL_TEST_BUILD = { isa = PBXBuildFile; fileRef = NATIVE_CALL_TEST_FILE; };
+    NOTIFICATION_BUILD = { isa = PBXBuildFile; fileRef = NOTIFICATION_FILE; };
+    NOTIFICATION_BRIDGE_BUILD = { isa = PBXBuildFile; fileRef = NOTIFICATION_BRIDGE_FILE; };
+    NOTIFICATION_TEST_BUILD = { isa = PBXBuildFile; fileRef = NOTIFICATION_TEST_FILE; };
     SOURCES_PHASE = {
       isa = PBXSourcesBuildPhase;
       buildActionMask = 2147483647;
-      files = (APP_DELEGATE_BUILD, NATIVE_CALL_BUILD, NATIVE_CALL_BRIDGE_BUILD);
+      files = (APP_DELEGATE_BUILD, NOTIFICATION_BUILD, NOTIFICATION_BRIDGE_BUILD);
       runOnlyForDeploymentPostprocessing = 0;
     };
     TEST_SOURCES_PHASE = {
       isa = PBXSourcesBuildPhase;
       buildActionMask = 2147483647;
-      files = (NATIVE_CALL_TEST_BUILD);
+      files = (NOTIFICATION_TEST_BUILD);
       runOnlyForDeploymentPostprocessing = 0;
     };
     FRAMEWORKS_PHASE = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };

@@ -6,9 +6,9 @@ describe("contracts", () => {
     const event = createEvent({
       id: "event-1",
       sequence: 12,
-      type: "call.ringing",
+      type: "lesson_reminder.opened",
       sessionId: "session-1",
-      payload: { callAttemptId: "call-1" }
+      payload: { occurrenceId: "occurrence-1" }
     });
 
     expect(event.version).toBe(1);

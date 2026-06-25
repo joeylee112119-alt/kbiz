@@ -33,7 +33,7 @@ describe.runIf(runDbE2e)("API HTTP + PostgreSQL end-to-end lesson flow", () => {
     await prisma?.$disconnect();
   });
 
-  it("persists guest auth through review generation and recovers after app restart", async () => {
+  it("persists guest auth through push-opened lesson start, report, and review generation", async () => {
     const guest = await request(app.getHttpServer()).post("/v1/auth/guest").send().expect(201);
     const userId = guest.body.data.user.id as string;
 
@@ -55,23 +55,37 @@ describe.runIf(runDbE2e)("API HTTP + PostgreSQL end-to-end lesson flow", () => {
     await request(app.getHttpServer()).post("/v1/onboarding/complete").send({ userId }).expect(201);
 
     const schedule = await request(app.getHttpServer())
-      .post("/v1/call-schedules")
+      .post("/v1/lesson-schedules")
       .send({
         userId,
-        weekdays: [1, 3, 5],
+        daysOfWeek: [1, 3, 5],
         localTime: "20:30",
         timezone: "Asia/Seoul",
-        lessonDurationMinutes: 15,
-        holidayPauseEnabled: true
+        durationMinutes: 15,
+        preReminderMinutes: 10,
+        enabled: true
       })
       .expect(201);
     expect(schedule.body.data.id).toBeTruthy();
+    const scheduleId = schedule.body.data.id as string;
 
-    const call = await request(app.getHttpServer()).post("/v1/calls/start-now").send({ userId }).expect(201);
-    const callId = call.body.data.id as string;
+    const occurrences = await request(app.getHttpServer()).get("/v1/lesson-occurrences").expect(200);
+    const occurrence = occurrences.body.data.find((item: { scheduleId: string }) => item.scheduleId === scheduleId);
+    expect(occurrence).toBeTruthy();
+    const occurrenceId = occurrence.id as string;
 
-    const accepted = await request(app.getHttpServer()).post(`/v1/calls/${callId}/accept`).send().expect(201);
-    const lessonSessionId = accepted.body.data.lessonSessionId as string;
+    const delivery = await request(app.getHttpServer()).post("/v1/notifications/test").send({ occurrenceId }).expect(201);
+    const deliveryId = delivery.body.data.id as string;
+    expect(delivery.body.data.status).toBe("SENT");
+
+    const opened = await request(app.getHttpServer()).post(`/v1/notifications/deliveries/${deliveryId}/open`).send().expect(201);
+    expect(opened.body.data.status).toBe("OPENED");
+
+    const ready = await request(app.getHttpServer()).post(`/v1/lesson-occurrences/${occurrenceId}/open`).send({ notificationDeliveryId: deliveryId }).expect(201);
+    expect(ready.body.data.status).toBe("READY");
+
+    const started = await request(app.getHttpServer()).post(`/v1/lesson-occurrences/${occurrenceId}/start`).send({ notificationDeliveryId: deliveryId }).expect(201);
+    const lessonSessionId = started.body.data.lessonSessionId as string;
     expect(lessonSessionId).toBeTruthy();
 
     await request(app.getHttpServer()).post(`/v1/lesson-sessions/${lessonSessionId}/start`).send().expect(201);
@@ -95,8 +109,8 @@ describe.runIf(runDbE2e)("API HTTP + PostgreSQL end-to-end lesson flow", () => {
     await app.close();
     app = await createApp();
 
-    const restoredCall = await request(app.getHttpServer()).get(`/v1/calls/${callId}`).expect(200);
-    expect(restoredCall.body.data.status).toBe("COMPLETED");
+    const restoredOccurrence = await request(app.getHttpServer()).get(`/v1/lesson-occurrences/${occurrenceId}`).expect(200);
+    expect(restoredOccurrence.body.data.status).toBe("COMPLETED");
 
     const restoredSession = await request(app.getHttpServer()).get(`/v1/lesson-sessions/${lessonSessionId}`).expect(200);
     expect(restoredSession.body.data.stage).toBe("COMPLETED");
@@ -106,8 +120,9 @@ describe.runIf(runDbE2e)("API HTTP + PostgreSQL end-to-end lesson flow", () => {
 
     const dbCounts = {
       users: await prisma.user.count(),
-      schedules: await prisma.callSchedule.count(),
-      calls: await prisma.callAttempt.count(),
+      schedules: await prisma.lessonSchedule.count(),
+      occurrences: await prisma.lessonOccurrence.count(),
+      notificationDeliveries: await prisma.notificationDelivery.count(),
       sessions: await prisma.lessonSession.count(),
       transcriptSegments: await prisma.transcriptSegment.count(),
       reports: await prisma.lessonReport.count(),
@@ -117,7 +132,8 @@ describe.runIf(runDbE2e)("API HTTP + PostgreSQL end-to-end lesson flow", () => {
     expect(dbCounts).toMatchObject({
       users: 1,
       schedules: 1,
-      calls: 1,
+      occurrences: 1,
+      notificationDeliveries: 1,
       sessions: 1,
       transcriptSegments: 1,
       reports: 1,
@@ -138,9 +154,9 @@ async function resetMutableData(prisma: PrismaClient): Promise<void> {
     prisma.utterance.deleteMany(),
     prisma.lessonStageSession.deleteMany(),
     prisma.lessonSession.deleteMany(),
-    prisma.notificationLog.deleteMany(),
-    prisma.callAttempt.deleteMany(),
-    prisma.callSchedule.deleteMany(),
+    prisma.notificationDelivery.deleteMany(),
+    prisma.lessonOccurrence.deleteMany(),
+    prisma.lessonSchedule.deleteMany(),
     prisma.pushToken.deleteMany(),
     prisma.device.deleteMany(),
     prisma.learnerProfile.deleteMany(),

@@ -2,15 +2,15 @@
 
 The mobile app is a React Native Community CLI bare project. It uses TypeScript, React Navigation, TanStack Query, Zustand, React Hook Form, Zod, secure storage, MMKV, and `react-native-webrtc`.
 
-Native code owns phone surfaces:
+Native code owns notification and permission surfaces:
 
-- iOS Swift module: PushKit token registration, CallKit incoming call reporting, answer/decline/end, audio session activation, Bluetooth/speaker routing, event bridge.
-- Android Kotlin module: FCM data message handling, Telecom/CallStyle integration, foreground service, audio focus, route changes, event bridge.
+- iOS Swift module: APNs registration, `UserNotifications` display/open events, debug lesson reminder, event bridge.
+- Android Kotlin module: FCM message handling, notification channel/display, FCM token upload, event bridge.
 
-React Native owns product state and API calls. Native call events are converted into server calls before WebRTC starts.
+React Native owns product state and API calls. Notification open events only navigate to the lesson ready screen; WebRTC and microphone capture start after the learner taps the lesson start action.
 
 ## Native Events
 
-iOS: `incomingCallReceived`, `callAnswered`, `callDeclined`, `callEnded`, `audioSessionActivated`, `audioSessionDeactivated`, `callTimedOut`, `nativeCallError`.
+iOS: `pushTokenRegistered`, `pushTokenRegistrationFailed`, `notificationPermissionChanged`, `lessonReminderDisplayed`, `notificationOpened`, `notificationError`.
 
-Android: `incomingCallReceived`, `callAnswered`, `callDeclined`, `callEnded`, `audioRouteChanged`, `telecomError`, `callTimedOut`.
+Android: `pushTokenRefreshed`, `lessonReminderDisplayed`, `notificationOpened`, `notificationSyncFailed`, `notificationPayloadInvalid`.

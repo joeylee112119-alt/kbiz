@@ -8,8 +8,9 @@ Implemented mock-safe routes include:
 - Onboarding: `GET /onboarding/options`, `PUT /me/learner-profile`, `POST /onboarding/complete`.
 - Tutors: `GET /tutors`, `GET /tutors/:id`, `GET /tutors/:id/voices`.
 - Devices: `POST /devices`, `PATCH /devices/:id`, push token create/delete.
-- Schedules: CRUD, pause, resume.
-- Calls: get, accept, decline, snooze, end, start-now.
+- Lesson schedules: CRUD, pause, resume.
+- Lesson occurrences: list, get, open ready screen, start, snooze, skip, dismiss, start-now.
+- Notifications: delivery list, delivery open, test notification.
 - Realtime: sessions, events, reconnect, defaults.
 - Lessons: today, session, start, end, report.
 - Review: list, answer, save/unsave expression.
@@ -21,8 +22,8 @@ Error format:
 ```json
 {
   "error": {
-    "code": "CALL_ALREADY_ACCEPTED",
-    "message": "이미 처리된 전화입니다.",
+    "code": "OCCURRENCE_EXPIRED",
+    "message": "수업 시작 가능 시간이 지났습니다.",
     "requestId": "uuid",
     "details": {}
   }
