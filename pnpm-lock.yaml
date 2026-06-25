@@ -172,6 +172,9 @@ importers:
       '@aiphone/realtime-client':
         specifier: workspace:*
         version: link:../../packages/realtime-client
+      '@babel/runtime':
+        specifier: 7.29.7
+        version: 7.29.7
       '@react-native-async-storage/async-storage':
         specifier: 2.1.2
         version: 2.1.2(react-native@0.79.4(@babel/core@7.29.7)(@react-native-community/cli@18.0.0(typescript@5.8.3))(@types/react@19.0.12)(react@19.0.0))
@@ -6902,9 +6905,7 @@ snapshots:
       metro-runtime: 0.82.5
     transitivePeerDependencies:
       - '@babel/core'
-      - bufferutil
       - supports-color
-      - utf-8-validate
 
   '@react-native/normalize-colors@0.79.4': {}
 

@@ -55,6 +55,8 @@ android {
 
 dependencies {
   implementation "com.facebook.react:react-android"
+  implementation "com.facebook.react:hermes-android"
+  implementation "androidx.appcompat:appcompat:1.7.0"
   implementation "androidx.core:core-ktx:1.15.0"
   implementation "androidx.core:core:1.15.0"
   implementation "com.google.firebase:firebase-messaging-ktx:24.1.0"
